@@ -34,9 +34,7 @@ app.post('/send-code', async (req, res) => {
     const { email } = req.body;
 
     if (!email) {
-      return res
-        .status(400)
-        .json({ success: false, message: 'Email gerekli' });
+      return res.status(400).json({ success: false, message: 'Email gerekli' });
     }
 
     if (!process.env.RESEND_API_KEY) {
@@ -64,7 +62,7 @@ Bu kodu uygulamadaki ilgili alana girerek işlemi tamamlayabilirsiniz.
 İyi çalışmalar,
 YAVUZEL`;
 
-    // HTML gövde (şık tasarım, hizalamalar düzeltilmiş)
+    // HTML gövde
     const htmlBody = `
 <!DOCTYPE html>
 <html lang="tr">
@@ -77,15 +75,19 @@ YAVUZEL`;
     <tr>
       <td align="center">
         <table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e6e6ea;box-shadow:0 12px 28px rgba(0,0,0,0.06);">
-          <!-- Üst şerit (başlık + tag paralel) -->
+          <!-- Üst şerit -->
           <tr>
-            <td style="background:linear-gradient(90deg,#2b1410,#e4380d,#ff8c3a);padding:16px 24px;text-align:center;">
-              <div style="font-size:18px;font-weight:700;color:#ffffff;letter-spacing:0.04em;margin-bottom:2px;">
-                YAVUZEL PANEL
-              </div>
-              <div style="font-size:11px;color:rgba(255,255,255,0.9);letter-spacing:0.16em;text-transform:uppercase;">
-                MUHASEBE · FİNANS · EKONOMİ
-              </div>
+            <td style="background:linear-gradient(90deg,#2b1410,#e4380d,#ff8c3a);padding:16px 24px;">
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="left" style="font-size:18px;font-weight:700;color:#ffffff;letter-spacing:0.04em;vertical-align:middle;">
+                    YAVUZEL PANEL
+                  </td>
+                  <td align="right" style="font-size:11px;color:rgba(255,255,255,0.85);vertical-align:middle;letter-spacing:0.12em;white-space:nowrap;">
+                    MUHASEBE · FİNANS · EKONOMİ
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
 
@@ -98,7 +100,7 @@ YAVUZEL`;
                 <strong style="color:#e4380d;">6 haneli kodu</strong> uygulamadaki ilgili alana giriniz.
               </p>
 
-              <!-- Kod kartı (tek satır, taşmayan) -->
+              <!-- Kod kartı -->
               <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 18px 0;">
                 <tr>
                   <td align="center">
@@ -109,20 +111,19 @@ YAVUZEL`;
                       background:linear-gradient(135deg,#2b1410,#4b1e16);
                       border:1px solid rgba(255,140,60,0.45);
                       box-shadow:0 10px 24px rgba(0,0,0,0.16);
-                      max-width:100%;
                     ">
                       <span style="font-size:13px;color:rgba(255,255,255,0.72);margin-right:10px;letter-spacing:0.08em;text-transform:uppercase;">
                         Doğrulama Kodu
                       </span>
                       <span style="
-                        font-size:20px;
+                        font-size:22px;
                         font-weight:800;
-                        letter-spacing:0.25em;
+                        letter-spacing:0.32em;
                         color:#ffefe4;
-                        white-space:nowrap;
                         display:inline-block;
+                        white-space:nowrap;
                       ">
-                        ${code.split('').join(' ')}
+                        ${code}
                       </span>
                     </div>
                   </td>
@@ -174,7 +175,7 @@ YAVUZEL`;
 `;
 
     // Resend ile mail gönder
-    const { error } = await resend.emails.send({
+    const { data, error } = await resend.emails.send({
       from: process.env.FROM_EMAIL,
       to: email,
       subject: 'YAVUZEL Panel – E-posta Doğrulama Kodunuz',
