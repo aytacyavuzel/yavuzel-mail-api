@@ -7,20 +7,9 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-// =============================
-//  R E S E N D   A Y A R I
-// =============================
-//
-// Render ortam değişkenleri:
-//
-//  RESEND_API_KEY = (Resend dashboard'taki API key)
-//  FROM_EMAIL     = doğruladığın gönderici adres
-//
-// Örnek FROM_EMAIL:
-//   "YAVUZEL Panel <no-reply@aytacyavuzel.com>"
-//   veya
-//   "YAVUZEL Panel <iletisim@aytacyavuzel.com>"
-//
+// ===============
+//  RESEND AYARI
+// ===============
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Basit test endpoint'i
@@ -52,7 +41,6 @@ app.post('/send-code', async (req, res) => {
     // 6 haneli kod üret
     const code = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Düz metin (fallback)
     const textBody = `Merhaba,
 
 YAVUZEL Panel için e-posta doğrulama kodunuz: ${code}
@@ -62,7 +50,6 @@ Bu kodu uygulamadaki ilgili alana girerek işlemi tamamlayabilirsiniz.
 İyi çalışmalar,
 YAVUZEL`;
 
-    // HTML gövde
     const htmlBody = `
 <!DOCTYPE html>
 <html lang="tr">
@@ -83,8 +70,8 @@ YAVUZEL`;
                   <td align="left" style="font-size:18px;font-weight:700;color:#ffffff;letter-spacing:0.04em;vertical-align:middle;">
                     YAVUZEL PANEL
                   </td>
-                  <td align="right" style="font-size:11px;color:rgba(255,255,255,0.85);vertical-align:middle;letter-spacing:0.12em;white-space:nowrap;">
-                    MUHASEBE · FİNANS · EKONOMİ
+                  <td align="right" style="font-size:10px;color:rgba(255,255,255,0.9);vertical-align:middle;text-transform:uppercase;white-space:nowrap;">
+                    MUHASEBE&nbsp;·&nbsp;FİNANS&nbsp;·&nbsp;EKONOMİ
                   </td>
                 </tr>
               </table>
@@ -174,7 +161,6 @@ YAVUZEL`;
 </html>
 `;
 
-    // Resend ile mail gönder
     const { data, error } = await resend.emails.send({
       from: process.env.FROM_EMAIL,
       to: email,
@@ -194,7 +180,6 @@ YAVUZEL`;
 
     console.log('📧 Kod gönderildi (Resend):', email, '→', code);
 
-    // Kodu app'e geri döndür
     return res.json({ success: true, code });
   } catch (err) {
     console.error('Mail gönderme hatası (genel):', err);
