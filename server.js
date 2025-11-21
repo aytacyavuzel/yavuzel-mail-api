@@ -1,41 +1,31 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
 // =============================
-//  H O S T I N G E R   SMTP
+//  R E S E N D   A Y A R I
 // =============================
 //
-// Hostinger panelindeki bilgiler:
+// Render ortam değişkenleri:
 //
-// Giden sunucu (SMTP): smtp.hostinger.com
-// Port: 465
-// SSL/TLS: EVET (SSL)
-// Kullanıcı adı: iletisim@aytacyavuzel.com
-// Şifre: Bu e-posta için Hostinger'da belirlediğin şifre
+//  RESEND_API_KEY = (Resend dashboard'taki API key)
+//  FROM_EMAIL     = doğruladığın gönderici adres
 //
-// Şifreyi koda yazmıyoruz, env'den alıyoruz:
-//   SMTP_USER -> iletisim@aytacyavuzel.com
-//   SMTP_PASS -> iletisim posta şifresi
+// Örnek FROM_EMAIL:
+//   "YAVUZEL Panel <no-reply@aytacyavuzel.com>"
+//   veya
+//   "YAVUZEL Panel <iletisim@aytacyavuzel.com>"
 //
-const transporter = nodemailer.createTransport({
-  host: 'smtp.hostinger.com',
-  port: 465,
-  secure: true, // 465 = SSL
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Basit test endpoint'i
 app.get('/', (req, res) => {
-  res.send('YAVUZEL Mail API çalışıyor (Hostinger SMTP)');
+  res.send('YAVUZEL Mail API ayakta (Resend)');
 });
 
 // Doğrulama kodu gönderme endpoint'i
@@ -49,10 +39,22 @@ app.post('/send-code', async (req, res) => {
         .json({ success: false, message: 'Email gerekli' });
     }
 
+    if (!process.env.RESEND_API_KEY) {
+      return res
+        .status(500)
+        .json({ success: false, message: 'RESEND_API_KEY tanımlı değil' });
+    }
+
+    if (!process.env.FROM_EMAIL) {
+      return res
+        .status(500)
+        .json({ success: false, message: 'FROM_EMAIL tanımlı değil' });
+    }
+
     // 6 haneli kod üret
     const code = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Düz (fallback) metin gövdesi
+    // Düz metin (fallback)
     const textBody = `Merhaba,
 
 YAVUZEL Panel için e-posta doğrulama kodunuz: ${code}
@@ -62,7 +64,7 @@ Bu kodu uygulamadaki ilgili alana girerek işlemi tamamlayabilirsiniz.
 İyi çalışmalar,
 YAVUZEL`;
 
-    // Kurumsal HTML gövde
+    // HTML gövde (şık tasarım)
     const htmlBody = `
 <!DOCTYPE html>
 <html lang="tr">
@@ -167,36 +169,40 @@ YAVUZEL`;
 </html>
 `;
 
-    const mailOptions = {
-      from: 'YAVUZEL Panel <iletisim@aytacyavuzel.com>',
+    // Resend ile mail gönder
+    const { data, error } = await resend.emails.send({
+      from: process.env.FROM_EMAIL,
       to: email,
       subject: 'YAVUZEL Panel – E-posta Doğrulama Kodunuz',
       text: textBody,
       html: htmlBody,
-    };
+    });
 
-    console.log('✉️ Gönderilecek mail options:', mailOptions);
+    if (error) {
+      console.error('Resend hata:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Mail gönderilemedi (Resend)',
+        error: error.message || String(error),
+      });
+    }
 
-    await transporter.sendMail(mailOptions);
-
-    console.log('📧 Kod gönderildi:', email, '→', code);
+    console.log('📧 Kod gönderildi (Resend):', email, '→', code);
 
     // Kodu app'e geri döndür
     return res.json({ success: true, code });
   } catch (err) {
-    console.error('Mail gönderme hatası (detay):', err);
+    console.error('Mail gönderme hatası (genel):', err);
 
-    // DEBUG için hata mesajını da dönüyoruz
     return res.status(500).json({
       success: false,
-      message: 'Mail gönderilemedi',
+      message: 'Mail gönderilemedi (server)',
       error: err.message || String(err),
-      code: err.code || null,
     });
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`📡 Mail API ayakta (Hostinger): http://localhost:${PORT}`);
+  console.log(`📡 Mail API ayakta (Resend): http://localhost:${PORT}`);
 });
