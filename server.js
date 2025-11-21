@@ -64,7 +64,7 @@ Bu kodu uygulamadaki ilgili alana girerek işlemi tamamlayabilirsiniz.
 İyi çalışmalar,
 YAVUZEL`;
 
-    // HTML gövde (şık tasarım)
+    // HTML gövde (şık tasarım, hizalama ve kod tek satır düzeltildi)
     const htmlBody = `
 <!DOCTYPE html>
 <html lang="tr">
@@ -82,10 +82,10 @@ YAVUZEL`;
             <td style="background:linear-gradient(90deg,#2b1410,#e4380d,#ff8c3a);padding:16px 24px;">
               <table width="100%" cellpadding="0" cellspacing="0">
                 <tr>
-                  <td align="left" style="font-size:18px;font-weight:700;color:#ffffff;letter-spacing:0.04em;">
+                  <td align="left" style="font-size:18px;font-weight:700;color:#ffffff;letter-spacing:0.04em;vertical-align:middle;">
                     YAVUZEL PANEL
                   </td>
-                  <td align="right" style="font-size:11px;color:rgba(255,255,255,0.8);">
+                  <td align="right" style="font-size:11px;color:rgba(255,255,255,0.85);vertical-align:middle;letter-spacing:0.12em;white-space:nowrap;">
                     MUHASEBE · FİNANS · EKONOMİ
                   </td>
                 </tr>
@@ -117,8 +117,15 @@ YAVUZEL`;
                       <span style="font-size:13px;color:rgba(255,255,255,0.72);margin-right:10px;letter-spacing:0.08em;text-transform:uppercase;">
                         Doğrulama Kodu
                       </span>
-                      <span style="font-size:22px;font-weight:800;letter-spacing:0.32em;color:#ffefe4;">
-                        ${code.split('').join(' ')}
+                      <span style="
+                        font-size:22px;
+                        font-weight:800;
+                        letter-spacing:0.32em;
+                        color:#ffefe4;
+                        display:inline-block;
+                        white-space:nowrap;
+                      ">
+                        ${code}
                       </span>
                     </div>
                   </td>
