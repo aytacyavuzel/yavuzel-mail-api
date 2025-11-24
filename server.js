@@ -6,34 +6,39 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Orijin: www.aytacyavuzel.com / iletisim@aytacyavuzel.com
+// ------------------------------------------------------------------
+// SMTP ayarları – ŞİFRE KESİNLİKLE KODA YAZILMIYOR
+// ------------------------------------------------------------------
 const EMAIL_USER = 'iletisim@aytacyavuzel.com';
-const EMAIL_PASS = process.env.EMAIL_PASSWORD; // ŞİFRE SADECE ENV'DEN GELİR
+const EMAIL_PASS = process.env.EMAIL_PASSWORD; // Render Environment'dan gelecek
 
-// Basit kontrol: env yoksa logda uyarı verelim
 if (!EMAIL_PASS) {
   console.warn(
-    '⚠️ Uyarı: EMAIL_PASSWORD environment variable tanımlı değil. SMTP oturumu başarısız olacaktır.'
+    '⚠️ EMAIL_PASSWORD environment variable tanımlı değil. Mail gönderimi başarısız olacaktır.'
   );
 }
 
+// ------------------------------------------------------------------
 // Middleware
+// ------------------------------------------------------------------
 app.use(cors());
 app.use(express.json());
 
-// Hostinger SMTP ayarları
+// ------------------------------------------------------------------
+// Nodemailer Transporter (Hostinger SMTP)
+// ------------------------------------------------------------------
 const transporter = nodemailer.createTransport({
   host: 'smtp.hostinger.com',
   port: 465,
-  secure: true, // SSL
+  secure: true,
   auth: {
     user: EMAIL_USER,
     pass: EMAIL_PASS,
   },
 });
 
-// İsteğe bağlı: SMTP bağlantısını verify edelim (log için)
-transporter.verify((error, success) => {
+// SMTP bağlantısını log için test et
+transporter.verify((error) => {
   if (error) {
     console.error('❌ SMTP doğrulama hatası:', error.message);
   } else {
@@ -41,12 +46,13 @@ transporter.verify((error, success) => {
   }
 });
 
-// 6 haneli rastgele kod üret
+// ------------------------------------------------------------------
+// Yardımcı fonksiyonlar
+// ------------------------------------------------------------------
 function generateVerificationCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// Mail şablonu - şık & kurumsal
 function getEmailTemplate(code) {
   return `
     <!DOCTYPE html>
@@ -253,7 +259,9 @@ function getEmailTemplate(code) {
   `;
 }
 
+// ------------------------------------------------------------------
 // Health check endpoint
+// ------------------------------------------------------------------
 app.get('/', (req, res) => {
   res.json({
     status: 'OK',
@@ -264,7 +272,9 @@ app.get('/', (req, res) => {
   });
 });
 
+// ------------------------------------------------------------------
 // POST /send-code
+// ------------------------------------------------------------------
 app.post('/send-code', async (req, res) => {
   const { email } = req.body || {};
 
@@ -284,6 +294,7 @@ app.post('/send-code', async (req, res) => {
   }
 
   const code = generateVerificationCode();
+
   const mailOptions = {
     from: `"Yavuzel Mali Müşavirlik" <${EMAIL_USER}>`,
     to: email,
@@ -299,7 +310,7 @@ app.post('/send-code', async (req, res) => {
     res.json({
       success: true,
       message: 'Doğrulama kodu e-posta adresinize gönderildi.',
-      code, // mobil taraf sadece doğrulama için kullanıyor
+      code,
     });
   } catch (error) {
     console.error('❌ Mail gönderme hatası:', error);
@@ -311,7 +322,9 @@ app.post('/send-code', async (req, res) => {
   }
 });
 
+// ------------------------------------------------------------------
 // Sunucuyu başlat
+// ------------------------------------------------------------------
 app.listen(PORT, () => {
   console.log(`🚀 Yavuzel Mail API çalışıyor - Port: ${PORT}`);
   console.log(`📧 Gönderen adres: ${EMAIL_USER}`);
