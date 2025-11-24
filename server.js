@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// YENİ HOSTINGER SMTP AYARLARI - GELİŞMİŞ
+// ✅ HOSTINGER SMTP AYARLARI
 const transporter = nodemailer.createTransport({
   host: 'smtp.hostinger.com',
   port: 465,
@@ -19,10 +19,10 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASSWORD
   },
   tls: {
-    rejectUnauthorized: false // SSL sertifika sorunlarını önler
+    rejectUnauthorized: false
   },
-  debug: true, // Debug modu aktif
-  logger: true // Detaylı log
+  debug: true,
+  logger: true
 });
 
 // SMTP bağlantısını test et
@@ -36,13 +36,8 @@ transporter.verify(function(error, success) {
   }
 });
 
-// 6 haneli rastgele kod üret
-function generateVerificationCode() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
-// Mail şablonu - ŞIK VE KURUMSAL
-function getEmailTemplate(code) {
+// Mail şablonu
+function getEmailTemplate(code, name) {
   return `
     <!DOCTYPE html>
     <html>
@@ -163,7 +158,6 @@ function getEmailTemplate(code) {
           border-radius: 8px;
           font-size: 13px;
           font-weight: 600;
-          transition: all 0.3s;
         }
         .divider {
           height: 1px;
@@ -171,16 +165,9 @@ function getEmailTemplate(code) {
           margin: 25px 0;
         }
         @media (max-width: 600px) {
-          .container {
-            margin: 20px;
-          }
-          .header, .content, .footer {
-            padding: 25px 20px;
-          }
-          .code {
-            font-size: 36px;
-            letter-spacing: 6px;
-          }
+          .container { margin: 20px; }
+          .header, .content, .footer { padding: 25px 20px; }
+          .code { font-size: 36px; letter-spacing: 6px; }
         }
       </style>
     </head>
@@ -198,7 +185,7 @@ function getEmailTemplate(code) {
         </div>
         
         <div class="content">
-          <p class="greeting">Merhaba,</p>
+          <p class="greeting">Sayın ${name || 'Değerli Kullanıcı'},</p>
           
           <p class="message">
             Hesabınızı doğrulamak için aşağıdaki 6 haneli kodu kullanın. 
@@ -253,23 +240,24 @@ function getEmailTemplate(code) {
   `;
 }
 
-// API Endpoint
+// ✅ API Endpoint - MOBİL APP'TEN GELEN KODU KULLAN
 app.post('/send-code', async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, code, name } = req.body;
 
     console.log('📧 Mail gönderme isteği alındı:', email);
+    console.log('🔢 Mobil app\'ten gelen kod:', code);
 
-    if (!email) {
+    if (!email || !code) {
       return res.status(400).json({
         success: false,
-        message: 'E-posta adresi gerekli'
+        message: 'E-posta ve kod gerekli'
       });
     }
 
-    // Doğrulama kodu üret
-    const verificationCode = generateVerificationCode();
-    console.log('🔑 Kod üretildi:', verificationCode);
+    // ⚠️ ÖNEMLİ: Mobil app'ten gelen kodu kullan, YENİ KOD ÜRETME!
+    const verificationCode = code;
+    console.log('✅ Kullanılacak kod:', verificationCode);
 
     // Mail gönder
     const mailOptions = {
@@ -279,7 +267,7 @@ app.post('/send-code', async (req, res) => {
       },
       to: email,
       subject: `🔐 Doğrulama Kodunuz: ${verificationCode}`,
-      html: getEmailTemplate(verificationCode)
+      html: getEmailTemplate(verificationCode, name)
     };
 
     console.log('📨 Mail gönderiliyor...');
@@ -287,24 +275,22 @@ app.post('/send-code', async (req, res) => {
     console.log('✅ Mail gönderildi!');
     console.log('📬 Message ID:', info.messageId);
     console.log('📧 Gönderilen:', email);
+    console.log('🔑 Gönderilen kod:', verificationCode);
 
     res.json({
       success: true,
       message: 'Doğrulama kodu gönderildi',
-      code: verificationCode // Production'da bunu kaldırın!
+      sentCode: verificationCode // Debug için
     });
 
   } catch (error) {
     console.error('❌ DETAYLI HATA:', error);
     console.error('Hata mesajı:', error.message);
-    console.error('Hata kodu:', error.code);
-    console.error('Hata stack:', error.stack);
     
     res.status(500).json({
       success: false,
       message: 'Mail gönderilemedi',
-      error: error.message,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      error: error.message
     });
   }
 });
@@ -314,7 +300,7 @@ app.get('/', (req, res) => {
   res.json({
     status: 'OK',
     service: 'Yavuzel Mail API',
-    version: '2.0',
+    version: '3.0',
     timestamp: new Date().toISOString()
   });
 });
@@ -327,7 +313,7 @@ app.listen(PORT, () => {
   console.log(`📡 Port: ${PORT}`);
   console.log(`📧 Mail: iletisim@aytacyavuzel.com`);
   console.log(`🌐 Domain: www.aytacyavuzel.com`);
-  console.log(`🔑 Password: ${process.env.EMAIL_PASSWORD ? '✅ Ayarlanmış' : '❌ AYARLANMAMIŞ!'}`);
+  console.log(`🔐 Password: ${process.env.EMAIL_PASSWORD ? '✅ Ayarlanmış' : '❌ AYARLANMAMIŞ!'}`);
   console.log(`📮 SMTP: smtp.hostinger.com:465`);
   console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
   console.log('='.repeat(60));
