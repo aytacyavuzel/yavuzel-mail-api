@@ -9,14 +9,30 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// YENİ HOSTINGER SMTP AYARLARI
+// YENİ HOSTINGER SMTP AYARLARI - GELİŞMİŞ
 const transporter = nodemailer.createTransport({
   host: 'smtp.hostinger.com',
   port: 465,
   secure: true, // SSL
   auth: {
-    user: 'iletisim@aytacyavuzel.com', // YENİ MAİL ADRESİ
-    pass: process.env.EMAIL_PASSWORD || 'ŞİFRENİZİ_BURAYA_GİRİN' // Render'da environment variable olarak ekleyin
+    user: 'iletisim@aytacyavuzel.com',
+    pass: process.env.EMAIL_PASSWORD
+  },
+  tls: {
+    rejectUnauthorized: false // SSL sertifika sorunlarını önler
+  },
+  debug: true, // Debug modu aktif
+  logger: true // Detaylı log
+});
+
+// SMTP bağlantısını test et
+transporter.verify(function(error, success) {
+  if (error) {
+    console.error('❌ SMTP Bağlantı Hatası:', error);
+    console.error('Email:', 'iletisim@aytacyavuzel.com');
+    console.error('Password var mı?:', !!process.env.EMAIL_PASSWORD);
+  } else {
+    console.log('✅ SMTP Sunucusu Hazır - Mail gönderilebilir!');
   }
 });
 
@@ -242,6 +258,8 @@ app.post('/send-code', async (req, res) => {
   try {
     const { email } = req.body;
 
+    console.log('📧 Mail gönderme isteği alındı:', email);
+
     if (!email) {
       return res.status(400).json({
         success: false,
@@ -251,6 +269,7 @@ app.post('/send-code', async (req, res) => {
 
     // Doğrulama kodu üret
     const verificationCode = generateVerificationCode();
+    console.log('🔑 Kod üretildi:', verificationCode);
 
     // Mail gönder
     const mailOptions = {
@@ -263,9 +282,11 @@ app.post('/send-code', async (req, res) => {
       html: getEmailTemplate(verificationCode)
     };
 
-    await transporter.sendMail(mailOptions);
-
-    console.log(`✅ Mail gönderildi: ${email} - Kod: ${verificationCode}`);
+    console.log('📨 Mail gönderiliyor...');
+    const info = await transporter.sendMail(mailOptions);
+    console.log('✅ Mail gönderildi!');
+    console.log('📬 Message ID:', info.messageId);
+    console.log('📧 Gönderilen:', email);
 
     res.json({
       success: true,
@@ -274,11 +295,16 @@ app.post('/send-code', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Mail gönderme hatası:', error);
+    console.error('❌ DETAYLI HATA:', error);
+    console.error('Hata mesajı:', error.message);
+    console.error('Hata kodu:', error.code);
+    console.error('Hata stack:', error.stack);
+    
     res.status(500).json({
       success: false,
       message: 'Mail gönderilemedi',
-      error: error.message
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
@@ -295,7 +321,14 @@ app.get('/', (req, res) => {
 
 // Server'ı başlat
 app.listen(PORT, () => {
-  console.log(`🚀 Mail API çalışıyor - Port: ${PORT}`);
-  console.log(`📧 Mail Adresi: iletisim@aytacyavuzel.com`);
+  console.log('='.repeat(60));
+  console.log('🚀 Yavuzel Mail API Başlatıldı!');
+  console.log('='.repeat(60));
+  console.log(`📡 Port: ${PORT}`);
+  console.log(`📧 Mail: iletisim@aytacyavuzel.com`);
   console.log(`🌐 Domain: www.aytacyavuzel.com`);
+  console.log(`🔑 Password: ${process.env.EMAIL_PASSWORD ? '✅ Ayarlanmış' : '❌ AYARLANMAMIŞ!'}`);
+  console.log(`📮 SMTP: smtp.hostinger.com:465`);
+  console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
+  console.log('='.repeat(60));
 });
