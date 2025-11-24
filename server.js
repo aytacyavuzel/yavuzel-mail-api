@@ -1,198 +1,301 @@
 const express = require('express');
+const nodemailer = require('nodemailer');
 const cors = require('cors');
-const bodyParser = require('body-parser');
-const { Resend } = require('resend');
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
-// ===============
-//  RESEND AYARI
-// ===============
-const resend = new Resend(process.env.RESEND_API_KEY);
-
-// Basit test endpoint'i
-app.get('/', (req, res) => {
-  res.send('YAVUZEL Mail API ayakta (Resend)');
+// YENİ HOSTINGER SMTP AYARLARI
+const transporter = nodemailer.createTransport({
+  host: 'smtp.hostinger.com',
+  port: 465,
+  secure: true, // SSL
+  auth: {
+    user: 'iletisim@aytacyavuzel.com', // YENİ MAİL ADRESİ
+    pass: process.env.EMAIL_PASSWORD || 'ŞİFRENİZİ_BURAYA_GİRİN' // Render'da environment variable olarak ekleyin
+  }
 });
 
-// Doğrulama kodu gönderme endpoint'i
+// 6 haneli rastgele kod üret
+function generateVerificationCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+// Mail şablonu - ŞIK VE KURUMSAL
+function getEmailTemplate(code) {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        body {
+          margin: 0;
+          padding: 0;
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+          background: linear-gradient(135deg, #1a0f0d 0%, #2d1612 100%);
+        }
+        .container {
+          max-width: 600px;
+          margin: 40px auto;
+          background: #ffffff;
+          border-radius: 20px;
+          overflow: hidden;
+          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        .header {
+          background: linear-gradient(135deg, #e4380d 0%, #ff6b3d 100%);
+          padding: 40px 30px;
+          text-align: center;
+        }
+        .logo {
+          width: 80px;
+          height: 80px;
+          margin: 0 auto 20px;
+          background: rgba(255, 255, 255, 0.2);
+          border-radius: 20px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .header h1 {
+          color: #ffffff;
+          margin: 0;
+          font-size: 28px;
+          font-weight: 800;
+          letter-spacing: 0.5px;
+        }
+        .content {
+          padding: 40px 30px;
+          background: #ffffff;
+        }
+        .greeting {
+          font-size: 18px;
+          color: #2d1612;
+          margin-bottom: 20px;
+          font-weight: 600;
+        }
+        .message {
+          font-size: 15px;
+          color: #555;
+          line-height: 1.8;
+          margin-bottom: 30px;
+        }
+        .code-container {
+          background: linear-gradient(135deg, #fff5f0 0%, #ffe5d9 100%);
+          border: 2px solid #ff8c3a;
+          border-radius: 16px;
+          padding: 30px;
+          text-align: center;
+          margin: 30px 0;
+        }
+        .code-label {
+          font-size: 14px;
+          color: #e4380d;
+          margin-bottom: 12px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+        }
+        .code {
+          font-size: 42px;
+          font-weight: 800;
+          color: #e4380d;
+          letter-spacing: 8px;
+          font-family: 'Courier New', monospace;
+        }
+        .warning {
+          background: #fff9e6;
+          border-left: 4px solid #fbbf24;
+          padding: 16px 20px;
+          border-radius: 8px;
+          margin: 25px 0;
+        }
+        .warning p {
+          margin: 0;
+          font-size: 14px;
+          color: #92400e;
+          line-height: 1.6;
+        }
+        .footer {
+          background: #f9fafb;
+          padding: 30px;
+          text-align: center;
+          border-top: 1px solid #e5e7eb;
+        }
+        .footer-text {
+          font-size: 13px;
+          color: #6b7280;
+          margin: 8px 0;
+          line-height: 1.6;
+        }
+        .social-links {
+          margin: 20px 0;
+        }
+        .social-link {
+          display: inline-block;
+          margin: 0 8px;
+          padding: 10px 20px;
+          background: #e4380d;
+          color: #ffffff;
+          text-decoration: none;
+          border-radius: 8px;
+          font-size: 13px;
+          font-weight: 600;
+          transition: all 0.3s;
+        }
+        .divider {
+          height: 1px;
+          background: linear-gradient(90deg, transparent, #e5e7eb, transparent);
+          margin: 25px 0;
+        }
+        @media (max-width: 600px) {
+          .container {
+            margin: 20px;
+          }
+          .header, .content, .footer {
+            padding: 25px 20px;
+          }
+          .code {
+            font-size: 36px;
+            letter-spacing: 6px;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <div class="logo">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="white" opacity="0.9"/>
+              <path d="M2 17L12 22L22 17" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M2 12L12 17L22 12" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <h1>Yavuzel Mali Müşavirlik</h1>
+        </div>
+        
+        <div class="content">
+          <p class="greeting">Merhaba,</p>
+          
+          <p class="message">
+            Hesabınızı doğrulamak için aşağıdaki 6 haneli kodu kullanın. 
+            Bu kod <strong>10 dakika</strong> boyunca geçerlidir.
+          </p>
+          
+          <div class="code-container">
+            <div class="code-label">Doğrulama Kodunuz</div>
+            <div class="code">${code}</div>
+          </div>
+          
+          <div class="warning">
+            <p>
+              <strong>⚠️ Güvenlik Uyarısı:</strong><br>
+              Bu kodu kimseyle paylaşmayın. Yavuzel Mali Müşavirlik asla 
+              telefon veya e-posta ile doğrulama kodu istemez.
+            </p>
+          </div>
+          
+          <div class="divider"></div>
+          
+          <p class="message" style="margin-bottom: 0;">
+            Bu maili siz istemediyseniz, lütfen dikkate almayın ve güvenliğiniz 
+            için şifrenizi değiştirmenizi öneririz.
+          </p>
+        </div>
+        
+        <div class="footer">
+          <p class="footer-text" style="font-weight: 600; color: #374151;">
+            Yavuzel Mali Müşavirlik
+          </p>
+          <p class="footer-text">
+            📧 iletisim@aytacyavuzel.com<br>
+            🌐 www.aytacyavuzel.com
+          </p>
+          
+          <div class="social-links">
+            <a href="https://www.instagram.com/aytacyavuzel/" class="social-link">Instagram</a>
+            <a href="https://www.linkedin.com/in/aytac-yavuzel/" class="social-link">LinkedIn</a>
+          </div>
+          
+          <div class="divider"></div>
+          
+          <p class="footer-text" style="font-size: 11px;">
+            © 2025 Yavuzel Mali Müşavirlik. Tüm hakları saklıdır.<br>
+            Bu e-posta otomatik olarak gönderilmiştir, lütfen yanıtlamayın.
+          </p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+}
+
+// API Endpoint
 app.post('/send-code', async (req, res) => {
   try {
     const { email } = req.body;
 
     if (!email) {
-      return res.status(400).json({ success: false, message: 'Email gerekli' });
-    }
-
-    if (!process.env.RESEND_API_KEY) {
-      return res
-        .status(500)
-        .json({ success: false, message: 'RESEND_API_KEY tanımlı değil' });
-    }
-
-    if (!process.env.FROM_EMAIL) {
-      return res
-        .status(500)
-        .json({ success: false, message: 'FROM_EMAIL tanımlı değil' });
-    }
-
-    // 6 haneli kod üret
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-
-    const textBody = `Merhaba,
-
-YAVUZEL Panel için e-posta doğrulama kodunuz: ${code}
-
-Bu kodu uygulamadaki ilgili alana girerek işlemi tamamlayabilirsiniz.
-
-İyi çalışmalar,
-YAVUZEL`;
-
-    const htmlBody = `
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-  <meta charset="UTF-8" />
-  <title>YAVUZEL Panel - E-posta Doğrulama Kodu</title>
-</head>
-<body style="margin:0;padding:0;background:#f4f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f6;padding:24px 12px;">
-    <tr>
-      <td align="center">
-        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e6e6ea;box-shadow:0 12px 28px rgba(0,0,0,0.06);">
-          <!-- Üst şerit -->
-          <tr>
-            <td style="background:linear-gradient(90deg,#2b1410,#e4380d,#ff8c3a);padding:16px 24px;">
-              <table width="100%" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td align="left" style="font-size:18px;font-weight:700;color:#ffffff;letter-spacing:0.04em;vertical-align:middle;">
-                    YAVUZEL PANEL
-                  </td>
-                  <td align="right" style="font-size:10px;color:rgba(255,255,255,0.9);vertical-align:middle;text-transform:uppercase;white-space:nowrap;">
-                    MUHASEBE&nbsp;·&nbsp;FİNANS&nbsp;·&nbsp;EKONOMİ
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <!-- İçerik -->
-          <tr>
-            <td style="padding:24px 24px 8px 24px;">
-              <p style="margin:0 0 8px 0;font-size:14px;color:#555c6b;">Merhaba,</p>
-              <p style="margin:0 0 18px 0;font-size:14px;color:#555c6b;line-height:1.6;">
-                YAVUZEL Panel için e-posta doğrulama isteğinde bulundunuz. İşleminizi tamamlamak için aşağıdaki
-                <strong style="color:#e4380d;">6 haneli kodu</strong> uygulamadaki ilgili alana giriniz.
-              </p>
-
-              <!-- Kod kartı -->
-              <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 18px 0;">
-                <tr>
-                  <td align="center">
-                    <div style="
-                      display:inline-block;
-                      padding:14px 22px;
-                      border-radius:999px;
-                      background:linear-gradient(135deg,#2b1410,#4b1e16);
-                      border:1px solid rgba(255,140,60,0.45);
-                      box-shadow:0 10px 24px rgba(0,0,0,0.16);
-                    ">
-                      <span style="font-size:13px;color:rgba(255,255,255,0.72);margin-right:10px;letter-spacing:0.08em;text-transform:uppercase;">
-                        Doğrulama Kodu
-                      </span>
-                      <span style="
-                        font-size:22px;
-                        font-weight:800;
-                        letter-spacing:0.32em;
-                        color:#ffefe4;
-                        display:inline-block;
-                        white-space:nowrap;
-                      ">
-                        ${code}
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-              </table>
-
-              <p style="margin:0 0 6px 0;font-size:12px;color:#777d8c;line-height:1.6;">
-                Bu kod güvenliğiniz için <strong>kısa süreli</strong> geçerlidir ve yalnızca sizin tarafınızdan kullanılmalıdır.
-              </p>
-              <p style="margin:0 0 18px 0;font-size:12px;color:#777d8c;line-height:1.6;">
-                Siz böyle bir işlem başlatmadıysanız bu e-postayı dikkate almayabilirsiniz.
-              </p>
-            </td>
-          </tr>
-
-          <!-- Alt bilgi -->
-          <tr>
-            <td style="padding:14px 24px 18px 24px;border-top:1px solid #f0f0f3;">
-              <table width="100%" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td align="left" style="font-size:12px;color:#9b9fab;">
-                    Saygılarımızla,<br />
-                    <strong style="color:#33363f;">YAVUZEL</strong>
-                  </td>
-                  <td align="right" style="font-size:11px;color:#b1b5c0;">
-                    Bu e-posta otomatik olarak oluşturulmuştur, lütfen yanıtlamayınız.
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-        </table>
-
-        <!-- Alt copyright -->
-        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin-top:10px;">
-          <tr>
-            <td align="center" style="font-size:11px;color:#a0a4b0;">
-              © ${new Date().getFullYear()} YAVUZEL · Tüm hakları saklıdır.
-            </td>
-          </tr>
-        </table>
-
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-`;
-
-    const { data, error } = await resend.emails.send({
-      from: process.env.FROM_EMAIL,
-      to: email,
-      subject: 'YAVUZEL Panel – E-posta Doğrulama Kodunuz',
-      text: textBody,
-      html: htmlBody,
-    });
-
-    if (error) {
-      console.error('Resend hata:', error);
-      return res.status(500).json({
+      return res.status(400).json({
         success: false,
-        message: 'Mail gönderilemedi (Resend)',
-        error: error.message || String(error),
+        message: 'E-posta adresi gerekli'
       });
     }
 
-    console.log('📧 Kod gönderildi (Resend):', email, '→', code);
+    // Doğrulama kodu üret
+    const verificationCode = generateVerificationCode();
 
-    return res.json({ success: true, code });
-  } catch (err) {
-    console.error('Mail gönderme hatası (genel):', err);
+    // Mail gönder
+    const mailOptions = {
+      from: {
+        name: 'Yavuzel Mali Müşavirlik',
+        address: 'iletisim@aytacyavuzel.com'
+      },
+      to: email,
+      subject: `🔐 Doğrulama Kodunuz: ${verificationCode}`,
+      html: getEmailTemplate(verificationCode)
+    };
 
-    return res.status(500).json({
+    await transporter.sendMail(mailOptions);
+
+    console.log(`✅ Mail gönderildi: ${email} - Kod: ${verificationCode}`);
+
+    res.json({
+      success: true,
+      message: 'Doğrulama kodu gönderildi',
+      code: verificationCode // Production'da bunu kaldırın!
+    });
+
+  } catch (error) {
+    console.error('❌ Mail gönderme hatası:', error);
+    res.status(500).json({
       success: false,
-      message: 'Mail gönderilemedi (server)',
-      error: err.message || String(err),
+      message: 'Mail gönderilemedi',
+      error: error.message
     });
   }
 });
 
-const PORT = process.env.PORT || 3000;
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({
+    status: 'OK',
+    service: 'Yavuzel Mail API',
+    version: '2.0',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Server'ı başlat
 app.listen(PORT, () => {
-  console.log(`📡 Mail API ayakta (Resend): http://localhost:${PORT}`);
+  console.log(`🚀 Mail API çalışıyor - Port: ${PORT}`);
+  console.log(`📧 Mail Adresi: iletisim@aytacyavuzel.com`);
+  console.log(`🌐 Domain: www.aytacyavuzel.com`);
 });
