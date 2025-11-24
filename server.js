@@ -7,10 +7,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ------------------------------------------------------------------
-// SMTP ayarları – ŞİFRE KESİNLİKLE KODA YAZILMIYOR
+// SMTP AYARLARI – ŞİFRE KESİNLİKLE KODA YAZILMIYOR
 // ------------------------------------------------------------------
 const EMAIL_USER = 'iletisim@aytacyavuzel.com';
-const EMAIL_PASS = process.env.EMAIL_PASSWORD; // Render Environment'dan gelecek
+const EMAIL_PASS = process.env.EMAIL_PASSWORD; // Render Environment'tan gelecek
 
 if (!EMAIL_PASS) {
   console.warn(
@@ -19,25 +19,29 @@ if (!EMAIL_PASS) {
 }
 
 // ------------------------------------------------------------------
-// Middleware
+// MIDDLEWARE
 // ------------------------------------------------------------------
 app.use(cors());
 app.use(express.json());
 
 // ------------------------------------------------------------------
-// Nodemailer Transporter (Hostinger SMTP)
+// NODEMAILER TRANSPORTER (HOSTINGER SMTP)
 // ------------------------------------------------------------------
 const transporter = nodemailer.createTransport({
   host: 'smtp.hostinger.com',
   port: 465,
-  secure: true,
+  secure: true, // SSL
   auth: {
     user: EMAIL_USER,
     pass: EMAIL_PASS,
   },
+  // Bazı sunucularda sertifika yüzünden problem çıkarsa diye:
+  tls: {
+    rejectUnauthorized: false,
+  },
 });
 
-// SMTP bağlantısını log için test et
+// SMTP bağlantısını test et (sadece log için)
 transporter.verify((error) => {
   if (error) {
     console.error('❌ SMTP doğrulama hatası:', error.message);
@@ -47,7 +51,7 @@ transporter.verify((error) => {
 });
 
 // ------------------------------------------------------------------
-// Yardımcı fonksiyonlar
+// YARDIMCI FONKSİYONLAR
 // ------------------------------------------------------------------
 function generateVerificationCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -260,7 +264,7 @@ function getEmailTemplate(code) {
 }
 
 // ------------------------------------------------------------------
-// Health check endpoint
+// HEALTH CHECK
 // ------------------------------------------------------------------
 app.get('/', (req, res) => {
   res.json({
@@ -313,7 +317,7 @@ app.post('/send-code', async (req, res) => {
       code,
     });
   } catch (error) {
-    console.error('❌ Mail gönderme hatası:', error);
+    console.error('❌ Mail gönderme hatası:', error.message);
     res.status(500).json({
       success: false,
       message: 'Mail gönderilemedi.',
@@ -323,7 +327,7 @@ app.post('/send-code', async (req, res) => {
 });
 
 // ------------------------------------------------------------------
-// Sunucuyu başlat
+// SUNUCUYU BAŞLAT
 // ------------------------------------------------------------------
 app.listen(PORT, () => {
   console.log(`🚀 Yavuzel Mail API çalışıyor - Port: ${PORT}`);
