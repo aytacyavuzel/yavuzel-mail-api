@@ -1,356 +1,304 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// 📧 MAIL API SERVER - OTP WITH VERIFICATION
+// ═══════════════════════════════════════════════════════════════════════════
+// Version: 3.0 - Secure OTP Flow
+// Features:
+// - Rate Limiting (5 requests / 15 minutes per IP)
+// - OTP Storage with Hash (bcrypt)
+// - OTP Expiry (2 minutes)
+// - Verification Endpoint
+// - Cleanup old OTPs
+// ═══════════════════════════════════════════════════════════════════════════
+
 const express = require('express');
 const nodemailer = require('nodemailer');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// ═══════════════════════════════════════════════════════════════════════════
+// MIDDLEWARE
+// ═══════════════════════════════════════════════════════════════════════════
+
 app.use(cors());
 app.use(express.json());
 
-// ============================================================================
-// ⭐ RATE LIMITING - YENİ!
-// ============================================================================
-// Basit in-memory rate limiter
+// ═══════════════════════════════════════════════════════════════════════════
+// IN-MEMORY STORAGE
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Rate Limiting Store: { ip: { count, resetTime } }
 const rateLimitStore = new Map();
 
-function rateLimit(req, res, next) {
-  const ip = req.ip || req.connection.remoteAddress;
+// OTP Store: { email: { hashedCode, expireTime, attempts } }
+const otpStore = new Map();
+
+// Constants
+const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
+const RATE_LIMIT_MAX = 5; // 5 requests per window
+const OTP_EXPIRE_MS = 2 * 60 * 1000; // 2 minutes
+const OTP_LENGTH = 6;
+const MAX_VERIFY_ATTEMPTS = 3;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RATE LIMITING MIDDLEWARE
+// ═══════════════════════════════════════════════════════════════════════════
+
+const rateLimiter = (req, res, next) => {
+  const clientIp = req.ip || req.connection.remoteAddress;
   const now = Date.now();
-  const windowMs = 15 * 60 * 1000; // 15 dakika
-  const maxRequests = 5; // Max 5 istek
-
-  // Store'dan IP'yi al
-  const record = rateLimitStore.get(ip) || { count: 0, resetTime: now + windowMs };
-
-  // Reset time geçtiyse sıfırla
-  if (now > record.resetTime) {
-    record.count = 0;
-    record.resetTime = now + windowMs;
+  
+  let clientData = rateLimitStore.get(clientIp);
+  
+  // Initialize or reset if window expired
+  if (!clientData || now > clientData.resetTime) {
+    clientData = {
+      count: 0,
+      resetTime: now + RATE_LIMIT_WINDOW,
+    };
   }
-
-  // Limit aşıldı mı?
-  if (record.count >= maxRequests) {
-    const remainingTime = Math.ceil((record.resetTime - now) / 1000 / 60);
+  
+  // Increment request count
+  clientData.count++;
+  rateLimitStore.set(clientIp, clientData);
+  
+  // Check limit
+  if (clientData.count > RATE_LIMIT_MAX) {
+    const retryAfter = Math.ceil((clientData.resetTime - now) / 1000);
     return res.status(429).json({
       success: false,
-      message: `Çok fazla istek. Lütfen ${remainingTime} dakika sonra tekrar deneyin.`,
-      retryAfter: remainingTime
+      message: `Çok fazla istek. ${Math.ceil(retryAfter / 60)} dakika sonra tekrar deneyin.`,
+      retryAfter,
     });
   }
+  
+  next();
+};
 
-  // Count artır
-  record.count++;
-  rateLimitStore.set(ip, record);
+// ═══════════════════════════════════════════════════════════════════════════
+// CLEANUP OLD RECORDS (Probabilistic)
+// ═══════════════════════════════════════════════════════════════════════════
 
-  // Cleanup eski kayıtlar (her 30 dakikada bir)
-  if (Math.random() < 0.01) {
-    for (const [key, value] of rateLimitStore.entries()) {
-      if (now > value.resetTime + windowMs) {
-        rateLimitStore.delete(key);
-      }
+const cleanupStores = () => {
+  const now = Date.now();
+  
+  // Clean rate limit store
+  for (const [ip, data] of rateLimitStore.entries()) {
+    if (now > data.resetTime) {
+      rateLimitStore.delete(ip);
     }
   }
+  
+  // Clean OTP store
+  for (const [email, data] of otpStore.entries()) {
+    if (now > data.expireTime) {
+      otpStore.delete(email);
+    }
+  }
+};
 
-  next();
-}
+// Run cleanup every 5 minutes
+setInterval(cleanupStores, 5 * 60 * 1000);
 
-// ============================================================================
-// SMTP AYARLARI
-// ============================================================================
+// ═══════════════════════════════════════════════════════════════════════════
+// EMAIL TRANSPORTER (Hostinger SMTP)
+// ═══════════════════════════════════════════════════════════════════════════
+
 const transporter = nodemailer.createTransport({
   host: 'smtp.hostinger.com',
   port: 465,
   secure: true,
   auth: {
-    user: 'iletisim@aytacyavuzel.com',
-    pass: process.env.EMAIL_PASSWORD
+    user: 'info@aytacyavuzel.com',
+    pass: 'Ay123456!',
   },
-  tls: {
-    rejectUnauthorized: false
-  },
-  debug: true,
-  logger: true
 });
 
-// SMTP bağlantısını test et
-transporter.verify(function(error, success) {
-  if (error) {
-    console.error('❌ SMTP Bağlantı Hatası:', error);
-    console.error('Email:', 'iletisim@aytacyavuzel.com');
-    console.error('Password var mı?:', !!process.env.EMAIL_PASSWORD);
-  } else {
-    console.log('✅ SMTP Sunucusu Hazır - Mail gönderilebilir!');
-  }
-});
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPER: GENERATE OTP
+// ═══════════════════════════════════════════════════════════════════════════
 
-// 6 haneli rastgele kod üret
-function generateVerificationCode() {
+const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
-}
+};
 
-// Mail şablonu
-function getEmailTemplate(code) {
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        body {
-          margin: 0;
-          padding: 0;
-          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-          background: linear-gradient(135deg, #1a0f0d 0%, #2d1612 100%);
-        }
-        .container {
-          max-width: 600px;
-          margin: 40px auto;
-          background: #ffffff;
-          border-radius: 20px;
-          overflow: hidden;
-          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-        }
-        .header {
-          background: linear-gradient(135deg, #e4380d 0%, #ff6b3d 100%);
-          padding: 40px 30px;
-          text-align: center;
-        }
-        .logo {
-          width: 80px;
-          height: 80px;
-          margin: 0 auto 20px;
-          background: rgba(255, 255, 255, 0.2);
-          border-radius: 20px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .header h1 {
-          color: #ffffff;
-          margin: 0;
-          font-size: 28px;
-          font-weight: 800;
-          letter-spacing: 0.5px;
-        }
-        .content {
-          padding: 40px 30px;
-          background: #ffffff;
-        }
-        .greeting {
-          font-size: 18px;
-          color: #2d1612;
-          margin-bottom: 20px;
-          font-weight: 600;
-        }
-        .message {
-          font-size: 15px;
-          color: #555;
-          line-height: 1.8;
-          margin-bottom: 30px;
-        }
-        .code-container {
-          background: linear-gradient(135deg, #fff5f0 0%, #ffe5d9 100%);
-          border: 2px solid #ff8c3a;
-          border-radius: 16px;
-          padding: 30px;
-          text-align: center;
-          margin: 30px 0;
-        }
-        .code-label {
-          font-size: 14px;
-          color: #e4380d;
-          margin-bottom: 12px;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-        }
-        .code {
-          font-size: 42px;
-          font-weight: 800;
-          color: #e4380d;
-          letter-spacing: 8px;
-          font-family: 'Courier New', monospace;
-        }
-        .expire-notice {
-          font-size: 13px;
-          color: #e4380d;
-          margin-top: 12px;
-          font-weight: 600;
-        }
-        .warning {
-          background: #fff9e6;
-          border-left: 4px solid #fbbf24;
-          padding: 16px 20px;
-          border-radius: 8px;
-          margin: 25px 0;
-        }
-        .warning p {
-          margin: 0;
-          font-size: 14px;
-          color: #92400e;
-          line-height: 1.6;
-        }
-        .footer {
-          background: #f9fafb;
-          padding: 30px;
-          text-align: center;
-          border-top: 1px solid #e5e7eb;
-        }
-        .footer-text {
-          font-size: 13px;
-          color: #6b7280;
-          margin: 8px 0;
-          line-height: 1.6;
-        }
-        @media (max-width: 600px) {
-          .container {
-            margin: 20px;
-          }
-          .header, .content, .footer {
-            padding: 25px 20px;
-          }
-          .code {
-            font-size: 36px;
-            letter-spacing: 6px;
-          }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <div class="logo">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="white" opacity="0.9"/>
-              <path d="M2 17L12 22L22 17" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M2 12L12 17L22 12" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-          <h1>Yavuzel Mali Müşavirlik</h1>
-        </div>
-        
-        <div class="content">
-          <p class="greeting">Merhaba,</p>
-          
-          <p class="message">
-            Hesabınızı doğrulamak için aşağıdaki 6 haneli kodu kullanın.
-          </p>
-          
-          <div class="code-container">
-            <div class="code-label">Doğrulama Kodunuz</div>
-            <div class="code">${code}</div>
-            <div class="expire-notice">⏰ Bu kod 2 dakika boyunca geçerlidir</div>
-          </div>
-          
-          <div class="warning">
-            <p>
-              <strong>⚠️ Güvenlik Uyarısı:</strong><br>
-              Bu kodu kimseyle paylaşmayın. Yavuzel Mali Müşavirlik asla 
-              telefon veya e-posta ile doğrulama kodu istemez.
-            </p>
-          </div>
-          
-          <p class="message" style="margin-bottom: 0;">
-            Bu maili siz istemediyseniz, lütfen dikkate almayın.
-          </p>
-        </div>
-        
-        <div class="footer">
-          <p class="footer-text" style="font-weight: 600; color: #374151;">
-            Yavuzel Mali Müşavirlik
-          </p>
-          <p class="footer-text">
-            📧 iletisim@aytacyavuzel.com<br>
-            🌐 www.aytacyavuzel.com
-          </p>
-          <p class="footer-text" style="font-size: 11px;">
-            © 2025 Yavuzel Mali Müşavirlik. Tüm hakları saklıdır.
-          </p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-}
+// ═══════════════════════════════════════════════════════════════════════════
+// ENDPOINT: SEND OTP (POST /send-code)
+// ═══════════════════════════════════════════════════════════════════════════
 
-// ============================================================================
-// API ENDPOINT - RATE LIMITED! ⭐
-// ============================================================================
-app.post('/send-code', rateLimit, async (req, res) => {
+app.post('/send-code', rateLimiter, async (req, res) => {
+  const { email } = req.body;
+  
+  // Validate email
+  if (!email || !email.includes('@')) {
+    return res.status(400).json({
+      success: false,
+      message: 'Geçerli bir e-posta adresi girin',
+    });
+  }
+  
   try {
-    const { email } = req.body;
-
-    console.log('📧 Mail gönderme isteği alındı:', email);
-
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: 'E-posta adresi gerekli'
-      });
-    }
-
-    // Doğrulama kodu üret
-    const verificationCode = generateVerificationCode();
-    console.log('🔑 Kod üretildi:', verificationCode);
-
-    // Mail gönder
+    // Generate OTP
+    const code = generateOTP();
+    
+    // Hash OTP (bcrypt with salt rounds 10)
+    const hashedCode = await bcrypt.hash(code, 10);
+    
+    // Store OTP with expiry
+    const expireTime = Date.now() + OTP_EXPIRE_MS;
+    otpStore.set(email, {
+      hashedCode,
+      expireTime,
+      attempts: 0,
+    });
+    
+    // Email content
     const mailOptions = {
-      from: {
-        name: 'Yavuzel Mali Müşavirlik',
-        address: 'iletisim@aytacyavuzel.com'
-      },
+      from: '"Aytaç Yavuzel" <info@aytacyavuzel.com>',
       to: email,
-      subject: `🔐 Doğrulama Kodunuz: ${verificationCode}`,
-      html: getEmailTemplate(verificationCode)
+      subject: 'E-posta Doğrulama Kodu',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #E4380D;">E-posta Doğrulama</h2>
+          <p>Merhaba,</p>
+          <p>Hesabınızı oluşturmak için aşağıdaki doğrulama kodunu kullanın:</p>
+          <div style="background: #f5f5f5; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #E4380D; border-radius: 8px; margin: 20px 0;">
+            ${code}
+          </div>
+          <p style="color: #666;">Bu kod <strong>2 dakika</strong> boyunca geçerlidir.</p>
+          <p style="color: #999; font-size: 12px;">Bu kodu kimseyle paylaşmayın. Eğer bu işlemi siz yapmadıysanız, bu e-postayı görmezden gelebilirsiniz.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+          <p style="color: #999; font-size: 12px;">Aytaç Yavuzel - Mali Müşavir</p>
+        </div>
+      `,
     };
-
-    console.log('📨 Mail gönderiliyor...');
-    const info = await transporter.sendMail(mailOptions);
-    console.log('✅ Mail gönderildi!');
-    console.log('📬 Message ID:', info.messageId);
-    console.log('📧 Gönderilen:', email);
-
+    
+    // Send email
+    await transporter.sendMail(mailOptions);
+    
+    // Probabilistic cleanup (10% chance)
+    if (Math.random() < 0.1) {
+      cleanupStores();
+    }
+    
+    // IMPORTANT: DO NOT SEND CODE TO CLIENT!
     res.json({
       success: true,
-      message: 'Doğrulama kodu gönderildi',
-      code: verificationCode // Production'da bunu kaldırın!
+      message: 'Doğrulama kodu e-posta adresinize gönderildi',
+      expiresIn: 120, // seconds (for UI countdown)
     });
-
-  } catch (error) {
-    console.error('❌ DETAYLI HATA:', error);
-    console.error('Hata mesajı:', error.message);
     
+  } catch (error) {
+    console.error('Send OTP error:', error);
     res.status(500).json({
       success: false,
-      message: 'Mail gönderilemedi',
-      error: error.message
+      message: 'E-posta gönderilemedi. Lütfen tekrar deneyin.',
     });
   }
 });
 
-// Health check endpoint
-app.get('/', (req, res) => {
+// ═══════════════════════════════════════════════════════════════════════════
+// ENDPOINT: VERIFY OTP (POST /verify-otp)
+// ═══════════════════════════════════════════════════════════════════════════
+
+app.post('/verify-otp', async (req, res) => {
+  const { email, code } = req.body;
+  
+  // Validate inputs
+  if (!email || !code) {
+    return res.status(400).json({
+      success: false,
+      message: 'E-posta ve kod gereklidir',
+    });
+  }
+  
+  // Check if OTP exists
+  const otpData = otpStore.get(email);
+  
+  if (!otpData) {
+    return res.status(404).json({
+      success: false,
+      message: 'Doğrulama kodu bulunamadı. Lütfen yeni kod gönderin.',
+    });
+  }
+  
+  // Check expiry
+  if (Date.now() > otpData.expireTime) {
+    otpStore.delete(email);
+    return res.status(410).json({
+      success: false,
+      message: 'Kodun süresi doldu. Lütfen yeni kod gönderin.',
+    });
+  }
+  
+  // Check attempts
+  if (otpData.attempts >= MAX_VERIFY_ATTEMPTS) {
+    otpStore.delete(email);
+    return res.status(429).json({
+      success: false,
+      message: 'Çok fazla hatalı deneme. Lütfen yeni kod gönderin.',
+    });
+  }
+  
+  // Verify code (compare with hash)
+  const isValid = await bcrypt.compare(code, otpData.hashedCode);
+  
+  if (isValid) {
+    // SUCCESS - Delete OTP
+    otpStore.delete(email);
+    
+    return res.json({
+      success: true,
+      message: 'E-posta doğrulandı',
+    });
+  } else {
+    // FAILED - Increment attempts
+    otpData.attempts++;
+    otpStore.set(email, otpData);
+    
+    const remainingAttempts = MAX_VERIFY_ATTEMPTS - otpData.attempts;
+    
+    return res.status(400).json({
+      success: false,
+      message: `Hatalı kod. ${remainingAttempts} deneme hakkınız kaldı.`,
+      remainingAttempts,
+    });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HEALTH CHECK
+// ═══════════════════════════════════════════════════════════════════════════
+
+app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
-    service: 'Yavuzel Mail API',
-    version: '2.1 - Rate Limited',
-    rateLimit: '5 requests / 15 minutes',
-    timestamp: new Date().toISOString()
+    version: '3.0',
+    features: [
+      'Rate Limiting',
+      'OTP Hashing',
+      'OTP Expiry',
+      'Verification Endpoint',
+      'Attempt Limiting',
+    ],
+    activeOTPs: otpStore.size,
+    rateLimitEntries: rateLimitStore.size,
   });
 });
 
-// Server'ı başlat
+// ═══════════════════════════════════════════════════════════════════════════
+// START SERVER
+// ═══════════════════════════════════════════════════════════════════════════
+
 app.listen(PORT, () => {
-  console.log('='.repeat(60));
-  console.log('🚀 Yavuzel Mail API Başlatıldı!');
-  console.log('='.repeat(60));
-  console.log(`📡 Port: ${PORT}`);
-  console.log(`📧 Mail: iletisim@aytacyavuzel.com`);
-  console.log(`🔒 Rate Limit: 5 requests / 15 minutes`);
-  console.log(`⏰ OTP Expire: 2 minutes`);
-  console.log(`⏱ Timestamp: ${new Date().toISOString()}`);
-  console.log('='.repeat(60));
+  console.log(`✅ Mail API Server running on port ${PORT}`);
+  console.log(`🔒 Rate Limiting: ${RATE_LIMIT_MAX} requests per ${RATE_LIMIT_WINDOW / 60000} minutes`);
+  console.log(`⏱️  OTP Expiry: ${OTP_EXPIRE_MS / 60000} minutes`);
+  console.log(`🔐 Max Verify Attempts: ${MAX_VERIFY_ATTEMPTS}`);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// END OF FILE
+// ═══════════════════════════════════════════════════════════════════════════
