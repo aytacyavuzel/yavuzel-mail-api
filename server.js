@@ -1,13 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// 📧 MAIL API SERVER - OTP WITH VERIFICATION
+// 📧 MAIL API SERVER - OTP WITH VERIFICATION (SECURE)
 // ═══════════════════════════════════════════════════════════════════════════
-// Version: 3.0 - Secure OTP Flow
-// Features:
-// - Rate Limiting (5 requests / 15 minutes per IP)
-// - OTP Storage with Hash (bcrypt)
-// - OTP Expiry (2 minutes)
-// - Verification Endpoint
-// - Cleanup old OTPs
+// Version: 3.1 - Environment Variables
+// ⚠️ SMTP credentials MUST be in environment variables!
 // ═══════════════════════════════════════════════════════════════════════════
 
 const express = require('express');
@@ -17,6 +12,16 @@ const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️ ENVIRONMENT VARIABLES CHECK
+// ═══════════════════════════════════════════════════════════════════════════
+
+if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+  console.error('❌ ERROR: SMTP_USER and SMTP_PASS environment variables are required!');
+  console.error('Please set them in Render dashboard: Environment → Environment Variables');
+  process.exit(1);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MIDDLEWARE
@@ -29,18 +34,37 @@ app.use(express.json());
 // IN-MEMORY STORAGE
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Rate Limiting Store: { ip: { count, resetTime } }
 const rateLimitStore = new Map();
-
-// OTP Store: { email: { hashedCode, expireTime, attempts } }
 const otpStore = new Map();
 
-// Constants
 const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
-const RATE_LIMIT_MAX = 5; // 5 requests per window
+const RATE_LIMIT_MAX = 5;
 const OTP_EXPIRE_MS = 2 * 60 * 1000; // 2 minutes
 const OTP_LENGTH = 6;
 const MAX_VERIFY_ATTEMPTS = 3;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EMAIL TRANSPORTER (Using Environment Variables)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const transporter = nodemailer.createTransport({
+  host: 'smtp.hostinger.com',
+  port: 465,
+  secure: true,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
+// Test connection on startup
+transporter.verify((error, success) => {
+  if (error) {
+    console.error('❌ SMTP connection failed:', error);
+  } else {
+    console.log('✅ SMTP connection successful');
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RATE LIMITING MIDDLEWARE
@@ -52,7 +76,6 @@ const rateLimiter = (req, res, next) => {
   
   let clientData = rateLimitStore.get(clientIp);
   
-  // Initialize or reset if window expired
   if (!clientData || now > clientData.resetTime) {
     clientData = {
       count: 0,
@@ -60,11 +83,9 @@ const rateLimiter = (req, res, next) => {
     };
   }
   
-  // Increment request count
   clientData.count++;
   rateLimitStore.set(clientIp, clientData);
   
-  // Check limit
   if (clientData.count > RATE_LIMIT_MAX) {
     const retryAfter = Math.ceil((clientData.resetTime - now) / 1000);
     return res.status(429).json({
@@ -78,20 +99,18 @@ const rateLimiter = (req, res, next) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CLEANUP OLD RECORDS (Probabilistic)
+// CLEANUP
 // ═══════════════════════════════════════════════════════════════════════════
 
 const cleanupStores = () => {
   const now = Date.now();
   
-  // Clean rate limit store
   for (const [ip, data] of rateLimitStore.entries()) {
     if (now > data.resetTime) {
       rateLimitStore.delete(ip);
     }
   }
   
-  // Clean OTP store
   for (const [email, data] of otpStore.entries()) {
     if (now > data.expireTime) {
       otpStore.delete(email);
@@ -99,22 +118,7 @@ const cleanupStores = () => {
   }
 };
 
-// Run cleanup every 5 minutes
 setInterval(cleanupStores, 5 * 60 * 1000);
-
-// ═══════════════════════════════════════════════════════════════════════════
-// EMAIL TRANSPORTER (Hostinger SMTP)
-// ═══════════════════════════════════════════════════════════════════════════
-
-const transporter = nodemailer.createTransport({
-  host: 'smtp.hostinger.com',
-  port: 465,
-  secure: true,
-  auth: {
-    user: 'info@aytacyavuzel.com',
-    pass: 'Ay123456!',
-  },
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPER: GENERATE OTP
@@ -125,13 +129,12 @@ const generateOTP = () => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ENDPOINT: SEND OTP (POST /send-code)
+// ENDPOINT: SEND OTP
 // ═══════════════════════════════════════════════════════════════════════════
 
 app.post('/send-code', rateLimiter, async (req, res) => {
   const { email } = req.body;
   
-  // Validate email
   if (!email || !email.includes('@')) {
     return res.status(400).json({
       success: false,
@@ -140,23 +143,18 @@ app.post('/send-code', rateLimiter, async (req, res) => {
   }
   
   try {
-    // Generate OTP
     const code = generateOTP();
-    
-    // Hash OTP (bcrypt with salt rounds 10)
     const hashedCode = await bcrypt.hash(code, 10);
-    
-    // Store OTP with expiry
     const expireTime = Date.now() + OTP_EXPIRE_MS;
+    
     otpStore.set(email, {
       hashedCode,
       expireTime,
       attempts: 0,
     });
     
-    // Email content
     const mailOptions = {
-      from: '"Aytaç Yavuzel" <info@aytacyavuzel.com>',
+      from: `"Aytaç Yavuzel" <${process.env.SMTP_USER}>`,
       to: email,
       subject: 'E-posta Doğrulama Kodu',
       html: `
@@ -175,19 +173,16 @@ app.post('/send-code', rateLimiter, async (req, res) => {
       `,
     };
     
-    // Send email
     await transporter.sendMail(mailOptions);
     
-    // Probabilistic cleanup (10% chance)
     if (Math.random() < 0.1) {
       cleanupStores();
     }
     
-    // IMPORTANT: DO NOT SEND CODE TO CLIENT!
     res.json({
       success: true,
       message: 'Doğrulama kodu e-posta adresinize gönderildi',
-      expiresIn: 120, // seconds (for UI countdown)
+      expiresIn: 120,
     });
     
   } catch (error) {
@@ -200,13 +195,12 @@ app.post('/send-code', rateLimiter, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ENDPOINT: VERIFY OTP (POST /verify-otp)
+// ENDPOINT: VERIFY OTP
 // ═══════════════════════════════════════════════════════════════════════════
 
 app.post('/verify-otp', async (req, res) => {
   const { email, code } = req.body;
   
-  // Validate inputs
   if (!email || !code) {
     return res.status(400).json({
       success: false,
@@ -214,7 +208,6 @@ app.post('/verify-otp', async (req, res) => {
     });
   }
   
-  // Check if OTP exists
   const otpData = otpStore.get(email);
   
   if (!otpData) {
@@ -224,7 +217,6 @@ app.post('/verify-otp', async (req, res) => {
     });
   }
   
-  // Check expiry
   if (Date.now() > otpData.expireTime) {
     otpStore.delete(email);
     return res.status(410).json({
@@ -233,7 +225,6 @@ app.post('/verify-otp', async (req, res) => {
     });
   }
   
-  // Check attempts
   if (otpData.attempts >= MAX_VERIFY_ATTEMPTS) {
     otpStore.delete(email);
     return res.status(429).json({
@@ -242,19 +233,15 @@ app.post('/verify-otp', async (req, res) => {
     });
   }
   
-  // Verify code (compare with hash)
   const isValid = await bcrypt.compare(code, otpData.hashedCode);
   
   if (isValid) {
-    // SUCCESS - Delete OTP
     otpStore.delete(email);
-    
     return res.json({
       success: true,
       message: 'E-posta doğrulandı',
     });
   } else {
-    // FAILED - Increment attempts
     otpData.attempts++;
     otpStore.set(email, otpData);
     
@@ -275,14 +262,19 @@ app.post('/verify-otp', async (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
-    version: '3.0',
+    version: '3.1',
     features: [
       'Rate Limiting',
       'OTP Hashing',
       'OTP Expiry',
       'Verification Endpoint',
       'Attempt Limiting',
+      'Environment Variables',
     ],
+    smtp: {
+      configured: !!process.env.SMTP_USER && !!process.env.SMTP_PASS,
+      user: process.env.SMTP_USER ? `${process.env.SMTP_USER.substring(0, 3)}***` : 'NOT SET',
+    },
     activeOTPs: otpStore.size,
     rateLimitEntries: rateLimitStore.size,
   });
@@ -297,8 +289,5 @@ app.listen(PORT, () => {
   console.log(`🔒 Rate Limiting: ${RATE_LIMIT_MAX} requests per ${RATE_LIMIT_WINDOW / 60000} minutes`);
   console.log(`⏱️  OTP Expiry: ${OTP_EXPIRE_MS / 60000} minutes`);
   console.log(`🔐 Max Verify Attempts: ${MAX_VERIFY_ATTEMPTS}`);
+  console.log(`📧 SMTP User: ${process.env.SMTP_USER || 'NOT SET'}`);
 });
-
-// ═══════════════════════════════════════════════════════════════════════════
-// END OF FILE
-// ═══════════════════════════════════════════════════════════════════════════
