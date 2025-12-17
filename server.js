@@ -1,8 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // 📧 MAIL API SERVER - OTP WITH VERIFICATION (SECURE)
 // ═══════════════════════════════════════════════════════════════════════════
-// Version: 3.1 - Environment Variables
-// ⚠️ SMTP credentials MUST be in environment variables!
+// Version: 3.2 - Production Ready
 // ═══════════════════════════════════════════════════════════════════════════
 
 const express = require('express');
@@ -30,6 +29,12 @@ if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
 app.use(cors());
 app.use(express.json());
 
+// Request logging (production)
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
+  next();
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // IN-MEMORY STORAGE
 // ═══════════════════════════════════════════════════════════════════════════
@@ -55,6 +60,8 @@ const transporter = nodemailer.createTransport({
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  connectionTimeout: 10000, // 10 seconds
+  greetingTimeout: 5000,
 });
 
 // Test connection on startup
@@ -104,17 +111,24 @@ const rateLimiter = (req, res, next) => {
 
 const cleanupStores = () => {
   const now = Date.now();
+  let cleaned = 0;
   
   for (const [ip, data] of rateLimitStore.entries()) {
     if (now > data.resetTime) {
       rateLimitStore.delete(ip);
+      cleaned++;
     }
   }
   
   for (const [email, data] of otpStore.entries()) {
     if (now > data.expireTime) {
       otpStore.delete(email);
+      cleaned++;
     }
+  }
+  
+  if (cleaned > 0) {
+    console.log(`🧹 Cleaned ${cleaned} expired entries`);
   }
 };
 
@@ -175,6 +189,8 @@ app.post('/send-code', rateLimiter, async (req, res) => {
     
     await transporter.sendMail(mailOptions);
     
+    console.log(`✅ OTP sent to ${email}`);
+    
     if (Math.random() < 0.1) {
       cleanupStores();
     }
@@ -186,7 +202,7 @@ app.post('/send-code', rateLimiter, async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Send OTP error:', error);
+    console.error('❌ Send OTP error:', error);
     res.status(500).json({
       success: false,
       message: 'E-posta gönderilemedi. Lütfen tekrar deneyin.',
@@ -195,10 +211,10 @@ app.post('/send-code', rateLimiter, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ENDPOINT: VERIFY OTP
+// ENDPOINT: VERIFY OTP (Main + Alias)
 // ═══════════════════════════════════════════════════════════════════════════
 
-app.post('/verify-otp', async (req, res) => {
+const verifyOtpHandler = async (req, res) => {
   const { email, code } = req.body;
   
   if (!email || !code) {
@@ -237,6 +253,7 @@ app.post('/verify-otp', async (req, res) => {
   
   if (isValid) {
     otpStore.delete(email);
+    console.log(`✅ OTP verified for ${email}`);
     return res.json({
       success: true,
       message: 'E-posta doğrulandı',
@@ -247,13 +264,19 @@ app.post('/verify-otp', async (req, res) => {
     
     const remainingAttempts = MAX_VERIFY_ATTEMPTS - otpData.attempts;
     
+    console.log(`⚠️ Invalid OTP for ${email}, ${remainingAttempts} attempts left`);
+    
     return res.status(400).json({
       success: false,
       message: `Hatalı kod. ${remainingAttempts} deneme hakkınız kaldı.`,
       remainingAttempts,
     });
   }
-});
+};
+
+// Both endpoints use same handler
+app.post('/verify-otp', verifyOtpHandler);
+app.post('/verify-code', verifyOtpHandler); // Alias for compatibility
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HEALTH CHECK
@@ -262,7 +285,8 @@ app.post('/verify-otp', async (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
-    version: '3.1',
+    version: '3.2',
+    timestamp: new Date().toISOString(),
     features: [
       'Rate Limiting',
       'OTP Hashing',
@@ -270,13 +294,50 @@ app.get('/health', (req, res) => {
       'Verification Endpoint',
       'Attempt Limiting',
       'Environment Variables',
+      'Endpoint Aliases',
+      'Request Logging',
     ],
     smtp: {
       configured: !!process.env.SMTP_USER && !!process.env.SMTP_PASS,
       user: process.env.SMTP_USER ? `${process.env.SMTP_USER.substring(0, 3)}***` : 'NOT SET',
     },
-    activeOTPs: otpStore.size,
-    rateLimitEntries: rateLimitStore.size,
+    stats: {
+      activeOTPs: otpStore.size,
+      rateLimitEntries: rateLimitStore.size,
+    },
+  });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({
+    service: 'Mail API Server',
+    version: '3.2',
+    endpoints: [
+      'POST /send-code - Send OTP',
+      'POST /verify-otp - Verify OTP',
+      'POST /verify-code - Verify OTP (alias)',
+      'GET /health - Health check',
+    ],
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Endpoint not found',
+    path: req.path,
+    availableEndpoints: ['/send-code', '/verify-otp', '/verify-code', '/health'],
+  });
+});
+
+// Error handler
+app.use((err, req, res, next) => {
+  console.error('❌ Server error:', err);
+  res.status(500).json({
+    success: false,
+    message: 'Internal server error',
   });
 });
 
@@ -285,9 +346,13 @@ app.get('/health', (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 app.listen(PORT, () => {
-  console.log(`✅ Mail API Server running on port ${PORT}`);
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log('✅ Mail API Server v3.2 - Production Ready');
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log(`🌐 Port: ${PORT}`);
   console.log(`🔒 Rate Limiting: ${RATE_LIMIT_MAX} requests per ${RATE_LIMIT_WINDOW / 60000} minutes`);
   console.log(`⏱️  OTP Expiry: ${OTP_EXPIRE_MS / 60000} minutes`);
   console.log(`🔐 Max Verify Attempts: ${MAX_VERIFY_ATTEMPTS}`);
   console.log(`📧 SMTP User: ${process.env.SMTP_USER || 'NOT SET'}`);
+  console.log('═══════════════════════════════════════════════════════════');
 });
