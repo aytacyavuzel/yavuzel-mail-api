@@ -402,7 +402,7 @@ app.get('/admin', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
-    version: '3.4',
+    version: '3.5',
     timestamp: new Date().toISOString(),
     services: ['mail', 'mali-veri', 'admin-panel'],
     endpoints: [
@@ -411,7 +411,10 @@ app.get('/health', (req, res) => {
       'POST /mail/verify-code - Verify OTP (alias)',
       'POST /api/admin/upload-pdf - Single PDF upload',
       'POST /api/admin/upload-pdfs - Multiple PDF upload',
-      'GET /api/financial-data - Get financial data',
+      'GET /api/financial-data - Get latest financial data',
+      'GET /api/financial-data/:period - Get specific period data',
+      'GET /api/financial-periods - Get all available periods',
+      'GET /api/financial-yearly/:year - Get yearly summary',
       'GET /admin - Admin Panel',
       'GET /health - Health check',
     ]
