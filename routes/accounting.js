@@ -195,14 +195,22 @@ router.post("/upload", upload.single("file"), async (req, res) => {
 router.get("/user/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
-    const year = req.query.year || new Date().getFullYear();
+    const year = req.query.year;
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("accounting_fees")
       .select("*")
-      .eq("user_id", userId)
-      .eq("year", year)
-      .single();
+      .eq("user_id", userId);
+
+    if (year) {
+      // Yıl belirtilmişse o yılı getir
+      query = query.eq("year", year);
+    } else {
+      // Yıl belirtilmemişse en güncel yılı getir
+      query = query.order("year", { ascending: false }).limit(1);
+    }
+
+    const { data, error } = await query.single();
 
     if (error && error.code !== "PGRST116") {
       throw error;
