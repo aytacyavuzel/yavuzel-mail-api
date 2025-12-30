@@ -11,6 +11,22 @@ const supabase = createClient(
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+// Türkçe ay isimlerini İngilizce sütun adlarına çevir
+const AY_MAP = {
+  "OCAK": "jan_paid",
+  "ŞUBAT": "feb_paid",
+  "MART": "mar_paid",
+  "NİSAN": "apr_paid",
+  "MAYIS": "may_paid",
+  "HAZİRAN": "jun_paid",
+  "TEMMUZ": "jul_paid",
+  "AĞUSTOS": "aug_paid",
+  "EYLÜL": "sep_paid",
+  "EKİM": "oct_paid",
+  "KASIM": "nov_paid",
+  "ARALIK": "dec_paid"
+};
+
 // Excel yükleme - Admin için
 router.post("/upload", upload.single("file"), async (req, res) => {
   try {
@@ -25,35 +41,112 @@ router.post("/upload", upload.single("file"), async (req, res) => {
 
     const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet);
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+    if (rows.length < 2) {
+      return res.status(400).json({ success: false, message: "Excel boş" });
+    }
+
+    // Başlık satırını al
+    const headers = rows[0];
+    
+    // Sütun indexlerini bul
+    let tcVknIndex = -1;
+    let monthlyFeeIndex = -1;
+    let year = new Date().getFullYear();
+    const ayIndexMap = {};
+
+    headers.forEach((header, index) => {
+      if (!header) return;
+      const h = header.toString().toUpperCase().trim();
+      
+      if (h.includes("TC") || h.includes("VKN")) {
+        tcVknIndex = index;
+      }
+      
+      // "2026 (AYLIK)" veya "2025 (AYLIK)" formatı
+      if (h.includes("AYLIK")) {
+        monthlyFeeIndex = index;
+        const yearMatch = h.match(/(\d{4})/);
+        if (yearMatch) {
+          year = parseInt(yearMatch[1]);
+        }
+      }
+      
+      // Ay sütunlarını bul
+      Object.keys(AY_MAP).forEach(ayAdi => {
+        if (h === ayAdi) {
+          ayIndexMap[AY_MAP[ayAdi]] = index;
+        }
+      });
+    });
+
+    if (tcVknIndex === -1) {
+      return res.status(400).json({ success: false, message: "TC/VKN sütunu bulunamadı" });
+    }
+
+    if (monthlyFeeIndex === -1) {
+      return res.status(400).json({ success: false, message: "Aylık ücret sütunu bulunamadı" });
+    }
 
     let inserted = 0;
     let updated = 0;
+    let skipped = 0;
+    const errors = [];
 
-    for (const row of rows) {
-      const userId = row.user_id;
-      const year = row.year || new Date().getFullYear();
+    // Veri satırlarını işle (ilk satır başlık)
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row || row.length === 0) continue;
 
-      if (!userId) continue;
+      const tcVkn = row[tcVknIndex]?.toString().trim();
+      if (!tcVkn) continue;
 
+      // TC/VKN'den user_id bul
+      const { data: userData, error: userError } = await supabase
+        .from("users")
+        .select("id")
+        .eq("tc_vkn", tcVkn)
+        .single();
+
+      if (userError || !userData) {
+        skipped++;
+        errors.push({ tcVkn, error: "Kullanıcı bulunamadı" });
+        continue;
+      }
+
+      const userId = userData.id;
+      const monthlyFee = parseFloat(row[monthlyFeeIndex]) || 0;
+
+      // Ödeme verilerini hazırla
       const feeData = {
         user_id: userId,
         year: year,
-        monthly_fee: row.monthly_fee || 0,
-        jan_paid: row.jan_paid ?? null,
-        feb_paid: row.feb_paid ?? null,
-        mar_paid: row.mar_paid ?? null,
-        apr_paid: row.apr_paid ?? null,
-        may_paid: row.may_paid ?? null,
-        jun_paid: row.jun_paid ?? null,
-        jul_paid: row.jul_paid ?? null,
-        aug_paid: row.aug_paid ?? null,
-        sep_paid: row.sep_paid ?? null,
-        oct_paid: row.oct_paid ?? null,
-        nov_paid: row.nov_paid ?? null,
-        dec_paid: row.dec_paid ?? null,
+        monthly_fee: monthlyFee,
+        jan_paid: null,
+        feb_paid: null,
+        mar_paid: null,
+        apr_paid: null,
+        may_paid: null,
+        jun_paid: null,
+        jul_paid: null,
+        aug_paid: null,
+        sep_paid: null,
+        oct_paid: null,
+        nov_paid: null,
+        dec_paid: null
       };
 
+      // Ay ödemelerini ekle
+      Object.keys(ayIndexMap).forEach(ayKey => {
+        const idx = ayIndexMap[ayKey];
+        const val = row[idx];
+        if (val !== null && val !== undefined && val !== "") {
+          feeData[ayKey] = parseFloat(val) || null;
+        }
+      });
+
+      // Mevcut kayıt var mı kontrol et
       const { data: existing } = await supabase
         .from("accounting_fees")
         .select("id")
@@ -75,9 +168,11 @@ router.post("/upload", upload.single("file"), async (req, res) => {
 
     res.json({
       success: true,
-      message: `${inserted} eklendi, ${updated} güncellendi`,
+      message: `${inserted} eklendi, ${updated} güncellendi, ${skipped} atlandı`,
       inserted,
       updated,
+      skipped,
+      errors: errors.slice(0, 10) // İlk 10 hatayı göster
     });
   } catch (error) {
     console.error("Upload error:", error);
