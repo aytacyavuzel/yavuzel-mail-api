@@ -26,7 +26,7 @@ app.use('/api', maliRoutes);
 app.use('/api/accounting', accountingRoutes);
 
 // ============================================
-// ADMIN PANELİ - PDF YÜKLEME ARAYÜZÜ
+// ADMIN PANELİ - PDF + EXCEL YÜKLEME ARAYÜZÜ
 // ============================================
 app.get('/admin', (req, res) => {
   res.send(`
@@ -42,23 +42,16 @@ app.get('/admin', (req, res) => {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
       min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       padding: 20px;
     }
     .container {
-      background: #1e293b;
-      border-radius: 24px;
-      padding: 40px;
-      width: 100%;
-      max-width: 500px;
-      box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
-      border: 1px solid #334155;
+      max-width: 600px;
+      margin: 0 auto;
     }
     .logo {
       text-align: center;
       margin-bottom: 32px;
+      padding-top: 20px;
     }
     .logo h1 {
       color: #f8fafc;
@@ -69,6 +62,43 @@ app.get('/admin', (req, res) => {
       color: #64748b;
       font-size: 14px;
       margin-top: 8px;
+    }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+    .tab {
+      flex: 1;
+      padding: 14px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      color: #94a3b8;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+    .tab:hover {
+      background: #334155;
+    }
+    .tab.active {
+      background: #6366f1;
+      border-color: #6366f1;
+      color: white;
+    }
+    .panel {
+      background: #1e293b;
+      border-radius: 24px;
+      padding: 32px;
+      box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+      border: 1px solid #334155;
+      display: none;
+    }
+    .panel.active {
+      display: block;
     }
     .form-group {
       margin-bottom: 20px;
@@ -110,12 +140,6 @@ app.get('/admin', (req, res) => {
     .file-upload.dragover {
       border-color: #6366f1;
       background: rgba(99, 102, 241, 0.1);
-    }
-    .file-upload svg {
-      width: 48px;
-      height: 48px;
-      color: #6366f1;
-      margin-bottom: 16px;
     }
     .file-upload p {
       color: #94a3b8;
@@ -238,122 +262,208 @@ app.get('/admin', (req, res) => {
       color: #94a3b8;
       font-size: 14px;
     }
+    .info-box {
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    .info-box h4 {
+      color: #a5b4fc;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+    .info-box p {
+      color: #94a3b8;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .info-box code {
+      background: #0f172a;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="logo">
       <h1>🔐 Yavuzel Admin Panel</h1>
-      <p>Beyanname PDF Yükleme Sistemi</p>
+      <p>Veri Yükleme Sistemi</p>
     </div>
 
-    <div class="form-group">
-      <label>Admin Şifresi</label>
-      <input type="password" id="password" placeholder="••••••••">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('pdf')">📄 PDF Yükle</div>
+      <div class="tab" onclick="switchTab('excel')">📊 Excel Yükle</div>
     </div>
 
-    <div class="form-group">
-      <label>PDF Dosyaları</label>
-      <div class="file-upload" id="dropZone">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-        </svg>
-        <p><span>Dosya seç</span> veya sürükle bırak</p>
-        <p style="margin-top: 8px; font-size: 12px;">Maksimum 200 PDF</p>
-        <input type="file" id="fileInput" multiple accept="application/pdf">
+    <!-- PDF PANEL -->
+    <div class="panel active" id="pdfPanel">
+      <div class="form-group">
+        <label>Admin Şifresi</label>
+        <input type="password" id="pdfPassword" placeholder="••••••••">
       </div>
-      <div class="file-count" id="fileCount"></div>
-    </div>
 
-    <button class="btn" id="uploadBtn" disabled>Yükle</button>
-
-    <div class="loading" id="loading">
-      <div class="spinner"></div>
-      <p>PDF'ler işleniyor...</p>
-    </div>
-
-    <div class="results" id="results">
-      <div class="summary">
-        <div class="summary-item success">
-          <div class="number" id="successCount">0</div>
-          <div class="label">Başarılı</div>
+      <div class="form-group">
+        <label>PDF Dosyaları (Beyanname)</label>
+        <div class="file-upload" id="pdfDropZone">
+          <p>📄 <span>Dosya seç</span> veya sürükle bırak</p>
+          <p style="margin-top: 8px; font-size: 12px;">Maksimum 200 PDF</p>
+          <input type="file" id="pdfInput" multiple accept="application/pdf">
         </div>
-        <div class="summary-item error">
-          <div class="number" id="errorCount">0</div>
-          <div class="label">Hatalı</div>
-        </div>
+        <div class="file-count" id="pdfCount"></div>
       </div>
-      <h3>Detaylar</h3>
-      <div id="resultList"></div>
+
+      <button class="btn" id="pdfBtn" disabled>Yükle</button>
+
+      <div class="loading" id="pdfLoading">
+        <div class="spinner"></div>
+        <p>PDF'ler işleniyor...</p>
+      </div>
+
+      <div class="results" id="pdfResults">
+        <div class="summary">
+          <div class="summary-item success">
+            <div class="number" id="pdfSuccessCount">0</div>
+            <div class="label">Başarılı</div>
+          </div>
+          <div class="summary-item error">
+            <div class="number" id="pdfErrorCount">0</div>
+            <div class="label">Hatalı</div>
+          </div>
+        </div>
+        <h3>Detaylar</h3>
+        <div id="pdfResultList"></div>
+      </div>
+    </div>
+
+    <!-- EXCEL PANEL -->
+    <div class="panel" id="excelPanel">
+      <div class="info-box">
+        <h4>📋 Excel Formatı</h4>
+        <p>Sütunlar: <code>user_id</code>, <code>year</code>, <code>monthly_fee</code>, <code>jan_paid</code>, <code>feb_paid</code>, <code>mar_paid</code>, <code>apr_paid</code>, <code>may_paid</code>, <code>jun_paid</code>, <code>jul_paid</code>, <code>aug_paid</code>, <code>sep_paid</code>, <code>oct_paid</code>, <code>nov_paid</code>, <code>dec_paid</code></p>
+        <p style="margin-top: 8px;">Ödenen aylar için tutar yaz, ödenmeyenler için boş bırak.</p>
+      </div>
+
+      <div class="form-group">
+        <label>Admin Şifresi</label>
+        <input type="password" id="excelPassword" placeholder="••••••••">
+      </div>
+
+      <div class="form-group">
+        <label>Excel Dosyası (Muhasebe Ücretleri)</label>
+        <div class="file-upload" id="excelDropZone">
+          <p>📊 <span>Dosya seç</span> veya sürükle bırak</p>
+          <p style="margin-top: 8px; font-size: 12px;">.xlsx veya .xls</p>
+          <input type="file" id="excelInput" accept=".xlsx,.xls">
+        </div>
+        <div class="file-count" id="excelCount"></div>
+      </div>
+
+      <button class="btn" id="excelBtn" disabled>Yükle</button>
+
+      <div class="loading" id="excelLoading">
+        <div class="spinner"></div>
+        <p>Excel işleniyor...</p>
+      </div>
+
+      <div class="results" id="excelResults">
+        <div class="summary">
+          <div class="summary-item success">
+            <div class="number" id="excelSuccessCount">0</div>
+            <div class="label">Eklenen/Güncellenen</div>
+          </div>
+          <div class="summary-item error">
+            <div class="number" id="excelErrorCount">0</div>
+            <div class="label">Hatalı</div>
+          </div>
+        </div>
+        <div id="excelResultList"></div>
+      </div>
     </div>
   </div>
 
   <script>
-    const dropZone = document.getElementById('dropZone');
-    const fileInput = document.getElementById('fileInput');
-    const fileCount = document.getElementById('fileCount');
-    const uploadBtn = document.getElementById('uploadBtn');
-    const password = document.getElementById('password');
-    const loading = document.getElementById('loading');
-    const results = document.getElementById('results');
-
-    let selectedFiles = [];
-
-    // Click to select
-    dropZone.addEventListener('click', () => fileInput.click());
-
-    // Drag & Drop
-    dropZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropZone.classList.add('dragover');
-    });
-
-    dropZone.addEventListener('dragleave', () => {
-      dropZone.classList.remove('dragover');
-    });
-
-    dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('dragover');
-      handleFiles(e.dataTransfer.files);
-    });
-
-    // File input change
-    fileInput.addEventListener('change', (e) => {
-      handleFiles(e.target.files);
-    });
-
-    function handleFiles(files) {
-      selectedFiles = Array.from(files).filter(f => f.type === 'application/pdf');
-      if (selectedFiles.length > 0) {
-        fileCount.style.display = 'block';
-        fileCount.textContent = selectedFiles.length + ' PDF seçildi';
-        uploadBtn.disabled = false;
+    // Tab switching
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      
+      if (tab === 'pdf') {
+        document.querySelectorAll('.tab')[0].classList.add('active');
+        document.getElementById('pdfPanel').classList.add('active');
       } else {
-        fileCount.style.display = 'none';
-        uploadBtn.disabled = true;
+        document.querySelectorAll('.tab')[1].classList.add('active');
+        document.getElementById('excelPanel').classList.add('active');
       }
     }
 
-    // Upload
-    uploadBtn.addEventListener('click', async () => {
-      if (!password.value) {
+    // ============================================
+    // PDF UPLOAD
+    // ============================================
+    const pdfDropZone = document.getElementById('pdfDropZone');
+    const pdfInput = document.getElementById('pdfInput');
+    const pdfCount = document.getElementById('pdfCount');
+    const pdfBtn = document.getElementById('pdfBtn');
+    const pdfPassword = document.getElementById('pdfPassword');
+    const pdfLoading = document.getElementById('pdfLoading');
+    const pdfResults = document.getElementById('pdfResults');
+
+    let pdfFiles = [];
+
+    pdfDropZone.addEventListener('click', () => pdfInput.click());
+
+    pdfDropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      pdfDropZone.classList.add('dragover');
+    });
+
+    pdfDropZone.addEventListener('dragleave', () => {
+      pdfDropZone.classList.remove('dragover');
+    });
+
+    pdfDropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      pdfDropZone.classList.remove('dragover');
+      handlePdfFiles(e.dataTransfer.files);
+    });
+
+    pdfInput.addEventListener('change', (e) => {
+      handlePdfFiles(e.target.files);
+    });
+
+    function handlePdfFiles(files) {
+      pdfFiles = Array.from(files).filter(f => f.type === 'application/pdf');
+      if (pdfFiles.length > 0) {
+        pdfCount.style.display = 'block';
+        pdfCount.textContent = pdfFiles.length + ' PDF seçildi';
+        pdfBtn.disabled = false;
+      } else {
+        pdfCount.style.display = 'none';
+        pdfBtn.disabled = true;
+      }
+    }
+
+    pdfBtn.addEventListener('click', async () => {
+      if (!pdfPassword.value) {
         alert('Şifre gerekli!');
         return;
       }
 
-      if (selectedFiles.length === 0) {
+      if (pdfFiles.length === 0) {
         alert('PDF seçin!');
         return;
       }
 
-      uploadBtn.disabled = true;
-      loading.style.display = 'block';
-      results.style.display = 'none';
+      pdfBtn.disabled = true;
+      pdfLoading.style.display = 'block';
+      pdfResults.style.display = 'none';
 
       const formData = new FormData();
-      formData.append('password', password.value);
-      selectedFiles.forEach(file => formData.append('pdfs', file));
+      formData.append('password', pdfPassword.value);
+      pdfFiles.forEach(file => formData.append('pdfs', file));
 
       try {
         const res = await fetch('/api/admin/upload-pdfs', {
@@ -363,20 +473,20 @@ app.get('/admin', (req, res) => {
 
         const data = await res.json();
         
-        loading.style.display = 'none';
-        results.style.display = 'block';
+        pdfLoading.style.display = 'none';
+        pdfResults.style.display = 'block';
 
         if (data.error) {
-          document.getElementById('successCount').textContent = '0';
-          document.getElementById('errorCount').textContent = '1';
-          document.getElementById('resultList').innerHTML = 
+          document.getElementById('pdfSuccessCount').textContent = '0';
+          document.getElementById('pdfErrorCount').textContent = '1';
+          document.getElementById('pdfResultList').innerHTML = 
             '<div class="result-item error">' + data.error + '</div>';
         } else {
           const successList = data.results.success || [];
           const errorList = data.results.errors || [];
 
-          document.getElementById('successCount').textContent = successList.length;
-          document.getElementById('errorCount').textContent = errorList.length;
+          document.getElementById('pdfSuccessCount').textContent = successList.length;
+          document.getElementById('pdfErrorCount').textContent = errorList.length;
 
           let html = '';
           successList.forEach(item => {
@@ -385,14 +495,110 @@ app.get('/admin', (req, res) => {
           errorList.forEach(item => {
             html += '<div class="result-item error">❌ ' + item.file + ' → ' + item.error + '</div>';
           });
-          document.getElementById('resultList').innerHTML = html;
+          document.getElementById('pdfResultList').innerHTML = html;
         }
       } catch (err) {
-        loading.style.display = 'none';
+        pdfLoading.style.display = 'none';
         alert('Hata: ' + err.message);
       }
 
-      uploadBtn.disabled = false;
+      pdfBtn.disabled = false;
+    });
+
+    // ============================================
+    // EXCEL UPLOAD
+    // ============================================
+    const excelDropZone = document.getElementById('excelDropZone');
+    const excelInput = document.getElementById('excelInput');
+    const excelCount = document.getElementById('excelCount');
+    const excelBtn = document.getElementById('excelBtn');
+    const excelPassword = document.getElementById('excelPassword');
+    const excelLoading = document.getElementById('excelLoading');
+    const excelResults = document.getElementById('excelResults');
+
+    let excelFile = null;
+
+    excelDropZone.addEventListener('click', () => excelInput.click());
+
+    excelDropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      excelDropZone.classList.add('dragover');
+    });
+
+    excelDropZone.addEventListener('dragleave', () => {
+      excelDropZone.classList.remove('dragover');
+    });
+
+    excelDropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      excelDropZone.classList.remove('dragover');
+      handleExcelFile(e.dataTransfer.files);
+    });
+
+    excelInput.addEventListener('change', (e) => {
+      handleExcelFile(e.target.files);
+    });
+
+    function handleExcelFile(files) {
+      const file = files[0];
+      if (file && (file.name.endsWith('.xlsx') || file.name.endsWith('.xls'))) {
+        excelFile = file;
+        excelCount.style.display = 'block';
+        excelCount.textContent = file.name;
+        excelBtn.disabled = false;
+      } else {
+        excelCount.style.display = 'none';
+        excelBtn.disabled = true;
+      }
+    }
+
+    excelBtn.addEventListener('click', async () => {
+      if (!excelPassword.value) {
+        alert('Şifre gerekli!');
+        return;
+      }
+
+      if (!excelFile) {
+        alert('Excel dosyası seçin!');
+        return;
+      }
+
+      excelBtn.disabled = true;
+      excelLoading.style.display = 'block';
+      excelResults.style.display = 'none';
+
+      const formData = new FormData();
+      formData.append('password', excelPassword.value);
+      formData.append('file', excelFile);
+
+      try {
+        const res = await fetch('/api/accounting/upload', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await res.json();
+        
+        excelLoading.style.display = 'none';
+        excelResults.style.display = 'block';
+
+        if (data.success) {
+          document.getElementById('excelSuccessCount').textContent = data.inserted + data.updated;
+          document.getElementById('excelErrorCount').textContent = '0';
+          document.getElementById('excelResultList').innerHTML = 
+            '<div class="result-item success">✅ ' + data.message + '</div>';
+        } else {
+          document.getElementById('excelSuccessCount').textContent = '0';
+          document.getElementById('excelErrorCount').textContent = '1';
+          document.getElementById('excelResultList').innerHTML = 
+            '<div class="result-item error">❌ ' + data.message + '</div>';
+        }
+      } catch (err) {
+        excelLoading.style.display = 'none';
+        alert('Hata: ' + err.message);
+      }
+
+      excelBtn.disabled = false;
     });
   </script>
 </body>
