@@ -191,7 +191,35 @@ router.post("/upload", upload.single("file"), async (req, res) => {
   }
 });
 
-// Kullanıcının ücret verisini getir
+// ═══════════════════════════════════════════════════════════════
+// YENİ: Kullanıcının TÜM yıllardaki ücret verisini getir
+// ═══════════════════════════════════════════════════════════════
+router.get("/user/:userId/all", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const { data, error } = await supabase
+      .from("accounting_fees")
+      .select("*")
+      .eq("user_id", userId)
+      .order("year", { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    res.json({ 
+      success: true, 
+      data: data || [],
+      years: data ? data.map(d => d.year) : []
+    });
+  } catch (error) {
+    console.error("Get all fees error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Kullanıcının ücret verisini getir (tek yıl)
 router.get("/user/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
@@ -204,7 +232,7 @@ router.get("/user/:userId", async (req, res) => {
 
     if (year) {
       // Yıl belirtilmişse o yılı getir
-      query = query.eq("year", year);
+      query = query.eq("year", parseInt(year));
     } else {
       // Yıl belirtilmemişse en güncel yılı getir
       query = query.order("year", { ascending: false }).limit(1);
