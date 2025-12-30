@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
 const multer = require("multer");
 const XLSX = require("xlsx");
@@ -10,6 +11,11 @@ const supabase = createClient(
 );
 
 const upload = multer({ storage: multer.memoryStorage() });
+
+// TC'yi SHA-256 ile hashle (mali.js ile aynı)
+function hashTC(tc) {
+  return crypto.createHash("sha256").update(tc.toString()).digest("hex");
+}
 
 // Türkçe ay isimlerini İngilizce sütun adlarına çevir
 const AY_MAP = {
@@ -102,16 +108,19 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       const tcVkn = row[tcVknIndex]?.toString().trim();
       if (!tcVkn) continue;
 
-      // TC/VKN'den user_id bul
+      // TC'yi hashle
+      const tcHash = hashTC(tcVkn);
+
+      // Hash'ten user_id bul
       const { data: userData, error: userError } = await supabase
         .from("users")
         .select("id")
-        .eq("tc_vkn", tcVkn)
+        .eq("tc_vkn_hash", tcHash)
         .single();
 
       if (userError || !userData) {
         skipped++;
-        errors.push({ tcVkn, error: "Kullanıcı bulunamadı" });
+        errors.push({ tcVkn: tcVkn.substring(0, 3) + "***", error: "Kullanıcı bulunamadı" });
         continue;
       }
 
@@ -166,13 +175,15 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       }
     }
 
+    console.log(`✅ Excel yüklendi: ${inserted} eklendi, ${updated} güncellendi, ${skipped} atlandı`);
+
     res.json({
       success: true,
       message: `${inserted} eklendi, ${updated} güncellendi, ${skipped} atlandı`,
       inserted,
       updated,
       skipped,
-      errors: errors.slice(0, 10) // İlk 10 hatayı göster
+      errors: errors.slice(0, 10)
     });
   } catch (error) {
     console.error("Upload error:", error);
