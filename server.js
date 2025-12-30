@@ -19,9 +19,11 @@ app.use((req, res, next) => {
 // Routes
 const mailRoutes = require('./routes/mail');
 const maliRoutes = require('./routes/mali');
+const accountingRoutes = require('./routes/accounting');
 
 app.use('/mail', mailRoutes);
 app.use('/api', maliRoutes);
+app.use('/api/accounting', accountingRoutes);
 
 // ============================================
 // ADMIN PANELİ - PDF YÜKLEME ARAYÜZÜ
@@ -404,7 +406,7 @@ app.get('/health', (req, res) => {
     status: 'OK',
     version: '3.5',
     timestamp: new Date().toISOString(),
-    services: ['mail', 'mali-veri', 'admin-panel'],
+    services: ['mail', 'mali-veri', 'admin-panel', 'accounting'],
     endpoints: [
       'POST /mail/send-code - Send OTP',
       'POST /mail/verify-otp - Verify OTP',
@@ -415,6 +417,8 @@ app.get('/health', (req, res) => {
       'GET /api/financial-data/:period - Get specific period data',
       'GET /api/financial-periods - Get all available periods',
       'GET /api/financial-yearly/:year - Get yearly summary',
+      'POST /api/accounting/upload - Excel upload for fees',
+      'GET /api/accounting/user/:userId - Get user fees',
       'GET /admin - Admin Panel',
       'GET /health - Health check',
     ]
@@ -425,8 +429,8 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     service: 'Yavuzel Backend API',
-    version: '3.4',
-    services: ['Mail API', 'Mali Veri API', 'Admin Panel'],
+    version: '3.5',
+    services: ['Mail API', 'Mali Veri API', 'Admin Panel', 'Accounting API'],
     message: 'Backend çalışıyor! 🚀'
   });
 });
@@ -451,11 +455,12 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('═══════════════════════════════════════════════════════════');
-  console.log('✅ Yavuzel Backend API v3.4');
+  console.log('✅ Yavuzel Backend API v3.5');
   console.log('═══════════════════════════════════════════════════════════');
   console.log(`🌐 Port: ${PORT}`);
   console.log(`📧 Mail API: /mail/*`);
   console.log(`💼 Mali Veri API: /api/*`);
+  console.log(`💰 Accounting API: /api/accounting/*`);
   console.log(`🔐 Admin Panel: /admin`);
   console.log('═══════════════════════════════════════════════════════════');
 });
