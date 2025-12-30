@@ -14,6 +14,11 @@ const upload = multer({ storage: multer.memoryStorage() });
 // Excel yükleme - Admin için
 router.post("/upload", upload.single("file"), async (req, res) => {
   try {
+    // Şifre kontrolü
+    if (req.body.password !== process.env.ADMIN_PASSWORD) {
+      return res.status(401).json({ success: false, message: "Yanlış şifre" });
+    }
+
     if (!req.file) {
       return res.status(400).json({ success: false, message: "Dosya yok" });
     }
@@ -27,7 +32,7 @@ router.post("/upload", upload.single("file"), async (req, res) => {
 
     for (const row of rows) {
       const userId = row.user_id;
-      const year = row.year || 2025;
+      const year = row.year || new Date().getFullYear();
 
       if (!userId) continue;
 
@@ -71,6 +76,8 @@ router.post("/upload", upload.single("file"), async (req, res) => {
     res.json({
       success: true,
       message: `${inserted} eklendi, ${updated} güncellendi`,
+      inserted,
+      updated,
     });
   } catch (error) {
     console.error("Upload error:", error);
