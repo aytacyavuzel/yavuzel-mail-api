@@ -12,9 +12,26 @@ const supabase = createClient(
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// TC'yi SHA-256 ile hashle (mali.js ile aynı)
+// ============================================
+// YARDIMCI FONKSİYONLAR
+// ============================================
+
+// TC'yi SHA-256 ile hashle
 function hashTC(tc) {
   return crypto.createHash("sha256").update(tc.toString()).digest("hex");
+}
+
+// userId'den tcHash al (mali.js ile aynı)
+async function getTcHashFromUserId(userId) {
+  if (!userId) return null;
+  
+  const { data } = await supabase
+    .from('users')
+    .select('tc_vkn_hash')
+    .eq('id', userId)
+    .single();
+  
+  return data?.tc_vkn_hash || null;
 }
 
 // Türkçe ay isimlerini İngilizce sütun adlarına çevir
@@ -33,7 +50,9 @@ const AY_MAP = {
   "ARALIK": "dec_paid"
 };
 
-// Excel yükleme - Admin için
+// ============================================
+// EXCEL UPLOAD - Admin için
+// ============================================
 router.post("/upload", upload.single("file"), async (req, res) => {
   try {
     // Şifre kontrolü
@@ -111,25 +130,20 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       // TC'yi hashle
       const tcHash = hashTC(tcVkn);
 
-      // Hash'ten user_id bul
-      const { data: userData, error: userError } = await supabase
+      // Hash'ten user_id bul (opsiyonel - geriye uyumluluk için)
+      const { data: userData } = await supabase
         .from("users")
         .select("id")
         .eq("tc_vkn_hash", tcHash)
         .single();
 
-      if (userError || !userData) {
-        skipped++;
-        errors.push({ tcVkn: tcVkn.substring(0, 3) + "***", error: "Kullanıcı bulunamadı" });
-        continue;
-      }
-
-      const userId = userData.id;
+      const userId = userData?.id || null;
       const monthlyFee = parseFloat(row[monthlyFeeIndex]) || 0;
 
       // Ödeme verilerini hazırla
       const feeData = {
         user_id: userId,
+        tc_vkn_hash: tcHash, // YENİ: tc_vkn_hash eklendi
         year: year,
         monthly_fee: monthlyFee,
         jan_paid: null,
@@ -155,11 +169,11 @@ router.post("/upload", upload.single("file"), async (req, res) => {
         }
       });
 
-      // Mevcut kayıt var mı kontrol et
+      // Mevcut kayıt var mı kontrol et (tc_vkn_hash + year ile)
       const { data: existing } = await supabase
         .from("accounting_fees")
         .select("id")
-        .eq("user_id", userId)
+        .eq("tc_vkn_hash", tcHash)
         .eq("year", year)
         .single();
 
@@ -172,6 +186,11 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       } else {
         await supabase.from("accounting_fees").insert(feeData);
         inserted++;
+      }
+
+      // Kullanıcı bulunamadıysa log (ama kayıt yine de eklenir)
+      if (!userId) {
+        console.log(`⚠️ Kullanıcı bulunamadı ama kayıt eklendi: TC ${tcVkn.substring(0, 3)}***`);
       }
     }
 
@@ -192,16 +211,24 @@ router.post("/upload", upload.single("file"), async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// YENİ: Kullanıcının TÜM yıllardaki ücret verisini getir
+// Kullanıcının TÜM yıllardaki ücret verisini getir
 // ═══════════════════════════════════════════════════════════════
 router.get("/user/:userId/all", async (req, res) => {
   try {
     const { userId } = req.params;
 
+    // userId'den tc_vkn_hash al
+    const tcHash = await getTcHashFromUserId(userId);
+    
+    if (!tcHash) {
+      return res.json({ success: true, data: [], years: [] });
+    }
+
+    // tc_vkn_hash ile sorgula
     const { data, error } = await supabase
       .from("accounting_fees")
       .select("*")
-      .eq("user_id", userId)
+      .eq("tc_vkn_hash", tcHash)
       .order("year", { ascending: false });
 
     if (error) {
@@ -219,16 +246,26 @@ router.get("/user/:userId/all", async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
 // Kullanıcının ücret verisini getir (tek yıl)
+// ═══════════════════════════════════════════════════════════════
 router.get("/user/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
     const year = req.query.year;
 
+    // userId'den tc_vkn_hash al
+    const tcHash = await getTcHashFromUserId(userId);
+    
+    if (!tcHash) {
+      return res.json({ success: true, data: null });
+    }
+
+    // tc_vkn_hash ile sorgula
     let query = supabase
       .from("accounting_fees")
       .select("*")
-      .eq("user_id", userId);
+      .eq("tc_vkn_hash", tcHash);
 
     if (year) {
       // Yıl belirtilmişse o yılı getir
