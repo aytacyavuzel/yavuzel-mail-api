@@ -330,7 +330,7 @@ router.get('/financial-yearly/:year', async (req, res) => {
   }
 });
 
-// 4. EN SON DÖNEM VERİSİ (Mevcut - güncellendi)
+// 4. EN SON DÖNEM VERİSİ
 router.get('/financial-data', async (req, res) => {
   try {
     const { userId, tc } = req.query;
@@ -412,8 +412,79 @@ router.get('/financial-data', async (req, res) => {
 });
 
 // ============================================
-// PDF UPLOAD ENDPOINT'LERİ (Değişmedi)
+// PDF UPLOAD ENDPOINT'LERİ
 // ============================================
+
+// TEST PARSE - Sadece parse sonucunu gösterir, DB'ye kaydetmez
+router.post('/admin/test-parse', upload.single('pdf'), async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (password !== process.env.ADMIN_PASSWORD) {
+      return res.status(401).json({ error: 'Yetkisiz!' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'PDF dosyası yok!' });
+    }
+    
+    const pdfData = await pdfParse(req.file.buffer);
+    const rawText = pdfData.text;
+    const cleanText = rawText.replace(/\s+/g, ' ');
+    
+    // TC Kimlik No
+    const tcMatch = cleanText.match(/Vergi Kimlik Numarası[^\d]*(\d{11})/);
+    const tc = tcMatch ? tcMatch[1] : null;
+    
+    // Dönem
+    const period = extractPeriod(rawText);
+    const periodName = period ? formatPeriodName(period) : null;
+    
+    // Matrah
+    const matrahMatch = cleanText.match(/Matrah Toplamı\s*([\d.,]+)/);
+    const matrah = matrahMatch ? parseDecimal(matrahMatch[1]) : 0;
+    
+    // Alış Gider
+    let alisGider = 0;
+    const idx = rawText.indexOf("Alınan Mal ve Hizmete Ait Bedel");
+    if (idx !== -1) {
+      const sub = rawText.substring(idx, idx + 600).replace(/\s+/g, '');
+      const matches = [...sub.matchAll(/(1|8|10|18|20)([\d]{1,3}(?:\.[\d]{3})*,\d{2})([\d]{1,3}(?:\.[\d]{3})*,\d{2})/g)];
+      matches.forEach(m => alisGider += parseDecimal(m[2]));
+    }
+    
+    // Devreden KDV
+    const devredenMatch = cleanText.match(/Sonraki Döneme Devreden Katma Değer Vergisi\s*([\d.,]+)/);
+    const devredenKDV = devredenMatch ? parseDecimal(devredenMatch[1]) : 0;
+    
+    // POS
+    const posMatch = cleanText.match(/Kredi Kartı İle Tahsil[^\d]*([\d.,]+)/);
+    const pos = posMatch ? parseDecimal(posMatch[1]) : 0;
+    
+    console.log(`🧪 Test Parse: ${req.file.originalname}`);
+    console.log(`   TC: ${tc || 'Bulunamadı'}`);
+    console.log(`   Dönem: ${periodName || 'Bulunamadı'}`);
+    console.log(`   Matrah: ${matrah}`);
+    console.log(`   Gider: ${alisGider}`);
+    
+    res.json({
+      success: true,
+      filename: req.file.originalname,
+      parsed: {
+        tc,
+        period,
+        periodName,
+        matrah,
+        alisGider,
+        devredenKDV,
+        pos
+      },
+      rawText: rawText.substring(0, 10000) // İlk 10K karakter
+    });
+    
+  } catch (err) {
+    console.error('❌ Test Parse Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // TOPLU PDF UPLOAD
 router.post('/admin/upload-pdfs', upload.array('pdfs', 200), async (req, res) => {
