@@ -45,7 +45,7 @@ app.get('/admin', (req, res) => {
       padding: 20px;
     }
     .container {
-      max-width: 600px;
+      max-width: 800px;
       margin: 0 auto;
     }
     .logo {
@@ -196,9 +196,9 @@ app.get('/admin', (req, res) => {
       margin-bottom: 16px;
     }
     .result-item {
-      padding: 12px;
-      border-radius: 8px;
-      margin-bottom: 8px;
+      padding: 16px;
+      border-radius: 12px;
+      margin-bottom: 12px;
       font-size: 13px;
     }
     .result-item.success {
@@ -210,6 +210,45 @@ app.get('/admin', (req, res) => {
       background: rgba(239, 68, 68, 0.1);
       color: #ef4444;
       border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+    .result-item .name {
+      font-weight: 700;
+      font-size: 15px;
+      margin-bottom: 8px;
+      color: #f8fafc;
+    }
+    .result-item .period {
+      color: #a5b4fc;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .result-item .details {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+    .result-item .detail-item {
+      display: flex;
+      justify-content: space-between;
+    }
+    .result-item .detail-label {
+      color: #94a3b8;
+    }
+    .result-item .detail-value {
+      color: #f8fafc;
+      font-weight: 600;
+    }
+    .result-item .detail-value.danger {
+      color: #f87171;
+    }
+    .result-item .detail-value.success {
+      color: #4ade80;
+    }
+    .result-item .detail-value.info {
+      color: #60a5fa;
     }
     .summary {
       display: flex;
@@ -285,6 +324,12 @@ app.get('/admin', (req, res) => {
       border-radius: 4px;
       font-size: 11px;
     }
+    .time-info {
+      text-align: center;
+      color: #64748b;
+      font-size: 12px;
+      margin-top: 12px;
+    }
   </style>
 </head>
 <body>
@@ -334,6 +379,7 @@ app.get('/admin', (req, res) => {
             <div class="label">Hatalı</div>
           </div>
         </div>
+        <div class="time-info" id="pdfTimeInfo"></div>
         <h3>Detaylar</h3>
         <div id="pdfResultList"></div>
       </div>
@@ -398,6 +444,17 @@ app.get('/admin', (req, res) => {
         document.querySelectorAll('.tab')[1].classList.add('active');
         document.getElementById('excelPanel').classList.add('active');
       }
+    }
+
+    // Para formatla
+    function formatMoney(num) {
+      if (!num && num !== 0) return '-';
+      return new Intl.NumberFormat('tr-TR', { 
+        style: 'currency', 
+        currency: 'TRY',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+      }).format(num);
     }
 
     // ============================================
@@ -481,20 +538,42 @@ app.get('/admin', (req, res) => {
           document.getElementById('pdfErrorCount').textContent = '1';
           document.getElementById('pdfResultList').innerHTML = 
             '<div class="result-item error">' + data.error + '</div>';
+          document.getElementById('pdfTimeInfo').textContent = '';
         } else {
           const successList = data.results.success || [];
           const errorList = data.results.errors || [];
 
           document.getElementById('pdfSuccessCount').textContent = successList.length;
           document.getElementById('pdfErrorCount').textContent = errorList.length;
+          
+          // Süre bilgisi
+          if (data.totalTime) {
+            document.getElementById('pdfTimeInfo').textContent = 
+              'Toplam süre: ' + (data.totalTime / 1000).toFixed(1) + ' sn (' + 
+              (data.totalTime / successList.length / 1000).toFixed(1) + ' sn/PDF)';
+          }
 
           let html = '';
+          
+          // Başarılı olanlar - detaylı gösterim
           successList.forEach(item => {
-            html += '<div class="result-item success">✅ ' + item.file + ' → ' + item.period + '</div>';
+            html += '<div class="result-item success">';
+            html += '<div class="name">👤 ' + (item.adSoyad || 'İsimsiz') + '</div>';
+            html += '<div class="period">📅 ' + item.period + '</div>';
+            html += '<div class="details">';
+            html += '<div class="detail-item"><span class="detail-label">Ciro:</span><span class="detail-value success">' + formatMoney(item.ciro) + '</span></div>';
+            html += '<div class="detail-item"><span class="detail-label">Gider:</span><span class="detail-value danger">' + formatMoney(item.gider) + '</span></div>';
+            html += '<div class="detail-item"><span class="detail-label">Devreden KDV:</span><span class="detail-value">' + formatMoney(item.devredenKDV) + '</span></div>';
+            html += '<div class="detail-item"><span class="detail-label">POS:</span><span class="detail-value info">' + formatMoney(item.pos) + '</span></div>';
+            html += '</div>';
+            html += '</div>';
           });
+          
+          // Hatalı olanlar
           errorList.forEach(item => {
             html += '<div class="result-item error">❌ ' + item.file + ' → ' + item.error + '</div>';
           });
+          
           document.getElementById('pdfResultList').innerHTML = html;
         }
       } catch (err) {
@@ -610,7 +689,7 @@ app.get('/admin', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
-    version: '3.5',
+    version: '3.6',
     timestamp: new Date().toISOString(),
     services: ['mail', 'mali-veri', 'admin-panel', 'accounting'],
     endpoints: [
@@ -635,7 +714,7 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     service: 'Yavuzel Backend API',
-    version: '3.5',
+    version: '3.6',
     services: ['Mail API', 'Mali Veri API', 'Admin Panel', 'Accounting API'],
     message: 'Backend çalışıyor! 🚀'
   });
@@ -661,7 +740,7 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('═══════════════════════════════════════════════════════════');
-  console.log('✅ Yavuzel Backend API v3.5');
+  console.log('✅ Yavuzel Backend API v3.6');
   console.log('═══════════════════════════════════════════════════════════');
   console.log(`🌐 Port: ${PORT}`);
   console.log(`📧 Mail API: /mail/*`);
