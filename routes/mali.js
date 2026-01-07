@@ -123,13 +123,16 @@ async function parseWithClaude(pdfBuffer) {
   
   "sonraki_doneme_devreden_kdv": "Sonraki Döneme Devreden Katma Değer Vergisi satırındaki değer",
   
-  "pos_tahsilat": "Kredi Kartı İle Tahsil Edilen Teslim ve Hizmetlerin KDV Dahil Karşılığını Teşkil Eden Bedel (bu AYLIK değerdir, kümülatif DEĞİL)"
+  "pos_tahsilat": "DİĞER BİLGİLER bölümündeki 'Kredi Kartı İle Tahsil Edilen' satırının DEĞERİ"
 }
 
-NOT: DİĞER BİLGİLER bölümünde 3 satır var:
-1. Teslim ve Hizmetlerin Karşılığını Teşkil Eden Bedel (kümülatif) - BUNU ALMA
-2. Kredi Kartı İle Tahsil Edilen... - BU POS_TAHSILAT
-3. Teslim ve Hizmetlerin Karşılığını Teşkil Eden Bedel (aylık) - BUNU ALMA
+KRİTİK - DİĞER BİLGİLER BÖLÜMÜ OKUMA KURALI:
+Bu bölümde 3 satır ve 3 değer var. Sıralama şöyle:
+- Satır: "Teslim ve Hizmetlerin Karşılığını Teşkil Eden Bedel (kümülatif)" → En BÜYÜK sayı (milyonlarca olabilir) - BUNU ALMA
+- Satır: "Kredi Kartı İle Tahsil Edilen..." → ORTA BOYUTTAKİ sayı - BU pos_tahsilat
+- Satır: "Teslim ve Hizmetlerin Karşılığını Teşkil Eden Bedel (aylık)" → matrah_toplami ile AYNI veya YAKIN sayı - BUNU ALMA
+
+pos_tahsilat için: "Kredi Kartı" kelimesini içeren satırın karşısındaki değeri al. Bu değer genellikle kümülatif değerden KÜÇÜK, aylık bedelden BÜYÜK olur.
 
 SADECE JSON DÖNDÜR, başka bir şey yazma.`;
 
