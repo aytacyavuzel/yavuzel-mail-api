@@ -1,3 +1,26 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * YAVUZEL MALİ VERİ API - v4.0
+ * KDV-1 Beyannamesi Parse Sistemi
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 
+ * Desteklenen Mükellef Tipleri:
+ * - Standart Ticaret (normal KDV1)
+ * - Yem Satıcıları (325 kodu - istisna)
+ * - Kuyumcular (özel matrah)
+ * - Tüm diğer meslek grupları
+ * 
+ * Parse Edilen Alanlar:
+ * - TC Kimlik No / VKN (mükellefin, mali müşavirin DEĞİL)
+ * - Dönem (Yıl + Ay)
+ * - Ciro (Matrah Toplamı + Özel Matrah Dahil Olmayan Bedel)
+ * - Gider (Alış Bedelleri + İstisna Alışları)
+ * - Devreden KDV
+ * - POS Tahsilat
+ * 
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -16,22 +39,26 @@ const upload = multer({
     if (file.mimetype === 'application/pdf') {
       cb(null, true);
     } else {
-      cb(new Error('Sadece PDF!'));
+      cb(new Error('Sadece PDF dosyası kabul edilir!'));
     }
   },
-  limits: { fileSize: 10 * 1024 * 1024 }
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
 });
 
-// ============================================
+// ═══════════════════════════════════════════════════════════════════════════
 // YARDIMCI FONKSİYONLAR
-// ============================================
+// ═══════════════════════════════════════════════════════════════════════════
 
-// TC'yi SHA-256 ile hashle
+/**
+ * TC/VKN'yi SHA-256 ile hashle
+ */
 function hashTC(tc) {
   return crypto.createHash('sha256').update(tc).digest('hex');
 }
 
-// userId'den tcHash al
+/**
+ * userId'den tcHash al
+ */
 async function getTcHashFromUserId(userId) {
   if (!userId) return null;
   
@@ -44,50 +71,55 @@ async function getTcHashFromUserId(userId) {
   return data?.tc_vkn_hash || null;
 }
 
-// Decimal parse
+/**
+ * Türk para formatını parse et
+ * "1.234.567,89" → 1234567.89
+ * "15.727.732,74" → 15727732.74
+ */
 function parseDecimal(str) {
   if (!str) return 0;
+  
+  // String'e çevir
+  str = String(str);
+  
+  // Sadece rakam, nokta ve virgül bırak
   let clean = str.replace(/[^\d.,]/g, '');
+  
+  if (!clean) return 0;
+  
+  // Türk formatı: noktalar binlik ayracı, virgül ondalık
+  // 1.234.567,89 → 1234567.89
   clean = clean.replace(/\./g, '').replace(',', '.');
-  return parseFloat(clean) || 0;
+  
+  const result = parseFloat(clean);
+  return isNaN(result) ? 0 : result;
 }
 
-// PDF'ten dönem çıkar
-function extractPeriod(text) {
-  const ayMap = {
-    'Ocak': '01', 'Şubat': '02', 'Mart': '03', 'Nisan': '04',
-    'Mayıs': '05', 'Haziran': '06', 'Temmuz': '07', 'Ağustos': '08',
-    'Eylül': '09', 'Ekim': '10', 'Kasım': '11', 'Aralık': '12',
-    'OCAK': '01', 'ŞUBAT': '02', 'MART': '03', 'NİSAN': '04',
-    'MAYIS': '05', 'HAZİRAN': '06', 'TEMMUZ': '07', 'AĞUSTOS': '08',
-    'EYLÜL': '09', 'EKİM': '10', 'KASIM': '11', 'ARALIK': '12'
-  };
-  const yilMatch = text.match(/(202[0-9])/);
-  const yil = yilMatch ? yilMatch[1] : null;
-  let ay = null;
-  const ayKeys = Object.keys(ayMap);
-  for (const ayIsmi of ayKeys) {
-    if (text.includes(ayIsmi)) {
-      ay = ayMap[ayIsmi];
-      break;
-    }
-  }
-  if (yil && ay) return `${yil}-${ay}`;
-  return null;
-}
-
-// Dönem adını formatla (2025-11 -> Kasım 2025)
+/**
+ * Dönem adını formatla
+ * "2025-11" → "Kasım 2025"
+ */
 function formatPeriodName(period) {
+  if (!period) return null;
+  
   const aylar = {
     '01': 'Ocak', '02': 'Şubat', '03': 'Mart', '04': 'Nisan',
     '05': 'Mayıs', '06': 'Haziran', '07': 'Temmuz', '08': 'Ağustos',
     '09': 'Eylül', '10': 'Ekim', '11': 'Kasım', '12': 'Aralık'
   };
-  const [yil, ay] = period.split('-');
-  return `${aylar[ay]} ${yil}`;
+  
+  const parts = period.split('-');
+  if (parts.length !== 2) return period;
+  
+  const [yil, ay] = parts;
+  return `${aylar[ay] || ay} ${yil}`;
 }
 
-// Önceki dönem hesapla (2025-11 -> 2025-10)
+/**
+ * Önceki dönemi hesapla
+ * "2025-11" → "2025-10"
+ * "2025-01" → "2024-12"
+ */
 function getPreviousPeriod(period) {
   const [year, month] = period.split('-').map(Number);
   if (month === 1) {
@@ -96,16 +128,503 @@ function getPreviousPeriod(period) {
   return `${year}-${String(month - 1).padStart(2, '0')}`;
 }
 
-// ============================================
-// MÜKELLEF VERİ ÇEKME ENDPOINT'LERİ
-// ============================================
+// ═══════════════════════════════════════════════════════════════════════════
+// PDF PARSE FONKSİYONLARI
+// ═══════════════════════════════════════════════════════════════════════════
 
-// 1. MEVCUT DÖNEMLER LİSTESİ
+/**
+ * TC Kimlik No / VKN Çıkarma
+ * ÖNEMLİ: Mükellefin TC'sini alır, Mali Müşavirin DEĞİL!
+ * 
+ * PDF yapısı:
+ * - Sayfa 1 üst kısım: Mükellef bilgileri (BU ALINACAK)
+ * - Sayfa son: "BEYANNAMEYİ DÜZENLEYEN" = Mali Müşavir (ATLANACAK)
+ */
+function extractTC(rawText) {
+  // "BEYANNAMEYİ DÜZENLEYEN" bölümünü bul ve öncesini al
+  const patterns = [
+    /BEYANNAME[Yİ]*\s*D[ÜU]ZENLEYEN/i,
+    /DÜZENLEYEN/i,
+    /Beyannamenin Hangi S[ıi]fatla/i
+  ];
+  
+  let cutIndex = rawText.length;
+  for (const pattern of patterns) {
+    const match = rawText.search(pattern);
+    if (match > 0 && match < cutIndex) {
+      cutIndex = match;
+    }
+  }
+  
+  // Sadece mükellef bilgilerinin olduğu kısımda ara
+  const searchArea = rawText.substring(0, cutIndex);
+  
+  // 11 haneli TC Kimlik No bul
+  const tc11Matches = searchArea.match(/\b(\d{11})\b/g);
+  if (tc11Matches && tc11Matches.length > 0) {
+    // İlk bulunan 11 haneli = Mükellef TC
+    return tc11Matches[0];
+  }
+  
+  // 10 haneli VKN bul (şirketler için)
+  const tc10Matches = searchArea.match(/\b(\d{10})\b/g);
+  if (tc10Matches && tc10Matches.length > 0) {
+    return tc10Matches[0];
+  }
+  
+  return null;
+}
+
+/**
+ * Dönem Çıkarma (Yıl + Ay)
+ * 
+ * PDF yapısı:
+ * Yıl: 2025
+ * Ay: Kasım
+ */
+function extractPeriod(rawText) {
+  const ayMap = {
+    'ocak': '01', 'şubat': '02', 'mart': '03', 'nisan': '04',
+    'mayıs': '05', 'haziran': '06', 'temmuz': '07', 'ağustos': '08',
+    'eylül': '09', 'ekim': '10', 'kasım': '11', 'aralık': '12',
+    // Büyük harf versiyonları
+    'OCAK': '01', 'ŞUBAT': '02', 'MART': '03', 'NİSAN': '04',
+    'MAYIS': '05', 'HAZİRAN': '06', 'TEMMUZ': '07', 'AĞUSTOS': '08',
+    'EYLÜL': '09', 'EKİM': '10', 'KASIM': '11', 'ARALIK': '12'
+  };
+  
+  let yil = null;
+  let ay = null;
+  
+  // Yöntem 1: "Yıl" kelimesinden sonraki 4 haneli sayı
+  const yilPatterns = [
+    /Y[ıi]l\s*[\n\r\s:]*(\d{4})/i,
+    /Y[ıi]l\s+(\d{4})/i
+  ];
+  
+  for (const pattern of yilPatterns) {
+    const match = rawText.match(pattern);
+    if (match) {
+      yil = match[1];
+      break;
+    }
+  }
+  
+  // Yöntem 2: "Ay" kelimesinden sonraki ay adı
+  const ayPatterns = [
+    /\bAy\s*[\n\r\s:]*([A-Za-zİÖÜŞÇĞıöüşçğ]+)/i,
+    /\bAy\s+([A-Za-zİÖÜŞÇĞıöüşçğ]+)/i
+  ];
+  
+  for (const pattern of ayPatterns) {
+    const match = rawText.match(pattern);
+    if (match) {
+      const ayAdi = match[1].trim();
+      // Hem küçük hem büyük harf ile dene
+      ay = ayMap[ayAdi] || ayMap[ayAdi.toLowerCase()] || ayMap[ayAdi.toUpperCase()];
+      if (ay) break;
+    }
+  }
+  
+  // Alternatif: Ay adını doğrudan text içinde ara
+  if (!ay) {
+    for (const [ayAdi, ayNo] of Object.entries(ayMap)) {
+      if (rawText.includes(ayAdi)) {
+        ay = ayNo;
+        break;
+      }
+    }
+  }
+  
+  // Alternatif: Yılı başka yerden al
+  if (!yil) {
+    // "Onay Zamanı: 25.12.2025" gibi yerlerden alma - bu tehlikeli
+    // Sadece "202X" formatında ve Yıl bağlamında ara
+    const yilAlt = rawText.match(/\b(202[4-9])\b/);
+    if (yilAlt) {
+      yil = yilAlt[1];
+    }
+  }
+  
+  if (yil && ay) {
+    return `${yil}-${ay}`;
+  }
+  
+  return null;
+}
+
+/**
+ * Ciro Çıkarma
+ * Ciro = Matrah Toplamı + Özel Matrah Dahil Olmayan Bedel
+ * 
+ * Örnekler:
+ * - Normal mükellef: 213.894,65 + 0 = 213.894,65
+ * - Yem satıcısı: 213.894,65 + 165.279,00 = 379.173,65
+ * - Kuyumcu: 27.744,82 + 15.727.732,74 = 15.755.477,56
+ */
+function extractCiro(rawText, cleanText) {
+  let matrahToplami = 0;
+  let ozelMatrahBedeli = 0;
+  
+  // ═══════════════════════════════════════════════════════════════
+  // 1. MATRAH TOPLAMI
+  // ═══════════════════════════════════════════════════════════════
+  const matrahPatterns = [
+    /Matrah Toplam[ıi]\s*([\d.,]+)/i,
+    /Matrah Toplami\s*([\d.,]+)/i
+  ];
+  
+  for (const pattern of matrahPatterns) {
+    const match = cleanText.match(pattern);
+    if (match) {
+      matrahToplami = parseDecimal(match[1]);
+      break;
+    }
+  }
+  
+  // ═══════════════════════════════════════════════════════════════
+  // 2. ÖZEL MATRAH DAHİL OLMAYAN BEDEL
+  // Bu alan kuyumcularda, yem satıcılarında vs. çok yüksek olabilir
+  // ═══════════════════════════════════════════════════════════════
+  
+  // Yöntem A: cleanText'te ara
+  const ozelMatrahPatterns = [
+    /[ÖO]zel Maht?rah [SŞ]ekline\s*Tabi [İI][şs]lemlerde Matraha\s*Dahil Olmayan Bedel\s*([\d.,]+)/i,
+    /Matraha\s*Dahil Olmayan Bedel\s*([\d.,]+)/i,
+    /Dahil Olmayan Bedel\s*([\d.,]+)/i,
+    /Tabi İşlemlerde Matraha Dahil Olmayan Bedel\s*([\d.,]+)/i
+  ];
+  
+  for (const pattern of ozelMatrahPatterns) {
+    const match = cleanText.match(pattern);
+    if (match) {
+      const bedel = parseDecimal(match[1]);
+      if (bedel > 0) {
+        ozelMatrahBedeli = bedel;
+        break;
+      }
+    }
+  }
+  
+  // Yöntem B: rawText'te satır satır ara
+  if (ozelMatrahBedeli === 0) {
+    const lines = rawText.split('\n');
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      // "Dahil Olmayan Bedel" içeren satırı bul
+      if (line.includes('Dahil Olmayan Bedel') || 
+          line.includes('Matraha Dahil Olmayan') ||
+          line.includes('Tabi İşlemlerde Matraha')) {
+        
+        // Bu satırda sayı var mı?
+        let numMatch = line.match(/([\d]{1,3}(?:\.[\d]{3})*,\d{2})/);
+        if (numMatch) {
+          const bedel = parseDecimal(numMatch[1]);
+          if (bedel > 0) {
+            ozelMatrahBedeli = bedel;
+            break;
+          }
+        }
+        
+        // Sonraki 3 satırda sayı ara
+        for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+          const nextLine = lines[j].trim();
+          numMatch = nextLine.match(/([\d]{1,3}(?:\.[\d]{3})*,\d{2})/);
+          if (numMatch) {
+            const bedel = parseDecimal(numMatch[1]);
+            // Matrah toplamından farklı olmalı
+            if (bedel > 0 && bedel !== matrahToplami) {
+              ozelMatrahBedeli = bedel;
+              break;
+            }
+          }
+        }
+        
+        if (ozelMatrahBedeli > 0) break;
+      }
+    }
+  }
+  
+  // Yöntem C: ÖZEL MATRAH ŞEKLİ TESPİT EDİLEN İŞLEMLER tablosundan
+  if (ozelMatrahBedeli === 0) {
+    const ozelMatrahIdx = rawText.indexOf('ÖZEL MATRAH');
+    if (ozelMatrahIdx !== -1) {
+      const section = rawText.substring(ozelMatrahIdx, ozelMatrahIdx + 1000);
+      // En büyük sayıyı bul (Matrah Toplamı hariç)
+      const allNumbers = section.match(/([\d]{1,3}(?:\.[\d]{3})*,\d{2})/g);
+      if (allNumbers) {
+        for (const numStr of allNumbers) {
+          const num = parseDecimal(numStr);
+          if (num > ozelMatrahBedeli && num !== matrahToplami) {
+            ozelMatrahBedeli = num;
+          }
+        }
+      }
+    }
+  }
+  
+  const toplam = matrahToplami + ozelMatrahBedeli;
+  
+  console.log(`   📊 Ciro Detay: Matrah=${matrahToplami.toLocaleString('tr-TR')} + ÖzelMatrah=${ozelMatrahBedeli.toLocaleString('tr-TR')} = ${toplam.toLocaleString('tr-TR')}`);
+  
+  return toplam;
+}
+
+/**
+ * Gider Çıkarma
+ * Gider = Alınan Mal ve Hizmete Ait Bedel (tüm KDV oranları) + KDV Ödenmeksizin Temin Edilen Mal Bedeli
+ * 
+ * PDF yapısı:
+ * BU DÖNEME AİT İNDİRİLECEK KDV TUTARININ ORANLARA GÖRE DAĞILIMI
+ * Alınan Mal ve Hizmete Ait Bedel
+ * 10    26.572,80    2.657,28
+ * 20    233.220,55   46.644,11
+ */
+function extractGider(rawText, cleanText) {
+  let alisGider = 0;
+  let istisnaBedeli = 0;
+  
+  // ═══════════════════════════════════════════════════════════════
+  // 1. ALINAN MAL VE HİZMETE AİT BEDEL
+  // ═══════════════════════════════════════════════════════════════
+  
+  const alisIdx = rawText.indexOf('Alınan Mal ve Hizmete Ait Bedel');
+  
+  if (alisIdx !== -1) {
+    // Bu bölümden sonraki alanı al
+    const alisSection = rawText.substring(alisIdx, alisIdx + 2000);
+    const lines = alisSection.split('\n');
+    
+    for (const line of lines) {
+      const cleanLine = line.trim();
+      if (!cleanLine) continue;
+      
+      // "Tecil" veya "İhracat" görünce dur
+      if (cleanLine.includes('Tecil') || cleanLine.includes('İhracat')) {
+        break;
+      }
+      
+      // KDV oranı ile başlayan satırları bul
+      // Format: ORAN BEDEL KDV_TUTARI
+      // Örnek: "10 26.572,80 2.657,28"
+      
+      // Boşlukları temizle ve parse et
+      const noSpace = cleanLine.replace(/\s+/g, '');
+      
+      // Pattern: başında 1,8,10,18,20 ve ardından Türk formatında sayılar
+      const patterns = [
+        /^(1)([\d]{1,3}(?:\.[\d]{3})*,\d{2})([\d]{1,3}(?:\.[\d]{3})*,\d{2})/,   // %1
+        /^(8)([\d]{1,3}(?:\.[\d]{3})*,\d{2})([\d]{1,3}(?:\.[\d]{3})*,\d{2})/,   // %8
+        /^(10)([\d]{1,3}(?:\.[\d]{3})*,\d{2})([\d]{1,3}(?:\.[\d]{3})*,\d{2})/,  // %10
+        /^(18)([\d]{1,3}(?:\.[\d]{3})*,\d{2})([\d]{1,3}(?:\.[\d]{3})*,\d{2})/,  // %18
+        /^(20)([\d]{1,3}(?:\.[\d]{3})*,\d{2})([\d]{1,3}(?:\.[\d]{3})*,\d{2})/   // %20
+      ];
+      
+      for (const pattern of patterns) {
+        const match = noSpace.match(pattern);
+        if (match) {
+          const bedel = parseDecimal(match[2]);
+          if (bedel > 0) {
+            alisGider += bedel;
+            console.log(`   📦 Alış KDV%${match[1]}: ${bedel.toLocaleString('tr-TR')}`);
+          }
+          break;
+        }
+      }
+    }
+  }
+  
+  // Alternatif yöntem: cleanText'te ara
+  if (alisGider === 0) {
+    // Tüm "Alınan Mal" bölümünü bul
+    const alisMatch = cleanText.match(/Al[ıi]nan Mal ve Hizmete Ait Bedel([\s\S]{0,1500}?)(?:Tecil|İhracat|Yurtiçi ve Yurtdışı KDV)/i);
+    if (alisMatch) {
+      const section = alisMatch[1];
+      // Türk formatındaki tüm sayıları bul
+      const numbers = section.match(/\d{1,3}(?:\.\d{3})*,\d{2}/g);
+      if (numbers) {
+        // Her 2 sayıdan ilki bedel, ikincisi KDV
+        for (let i = 0; i < numbers.length - 1; i += 2) {
+          const bedel = parseDecimal(numbers[i]);
+          if (bedel > 0) {
+            alisGider += bedel;
+          }
+        }
+      }
+    }
+  }
+  
+  // ═══════════════════════════════════════════════════════════════
+  // 2. KDV ÖDENMEKSİZİN TEMİN EDİLEN MAL BEDELİ (İstisna alışları)
+  // ═══════════════════════════════════════════════════════════════
+  
+  const istisnaPatterns = [
+    /KDV [ÖO]denmeksizin Temin Edilen Mal\s*Bedeli\s*([\d.,]+)/i,
+    /[ÖO]denmeksizin Temin Edilen Mal Bedeli\s*([\d.,]+)/i,
+    /KDV Ödenmeksizin Temin Edilen\s*Mal Bedeli\s*([\d.,]+)/i
+  ];
+  
+  for (const pattern of istisnaPatterns) {
+    const match = cleanText.match(pattern);
+    if (match) {
+      const bedel = parseDecimal(match[1]);
+      if (bedel > 0) {
+        istisnaBedeli = bedel;
+        console.log(`   🏷️ İstisna Alış: ${bedel.toLocaleString('tr-TR')}`);
+        break;
+      }
+    }
+  }
+  
+  // rawText'te de ara
+  if (istisnaBedeli === 0) {
+    const istisnaIdx = rawText.indexOf('KDV Ödenmeksizin Temin Edilen');
+    if (istisnaIdx !== -1) {
+      const section = rawText.substring(istisnaIdx, istisnaIdx + 200);
+      const numMatch = section.match(/([\d]{1,3}(?:\.[\d]{3})*,\d{2})/);
+      if (numMatch) {
+        istisnaBedeli = parseDecimal(numMatch[1]);
+        if (istisnaBedeli > 0) {
+          console.log(`   🏷️ İstisna Alış (alt): ${istisnaBedeli.toLocaleString('tr-TR')}`);
+        }
+      }
+    }
+  }
+  
+  const toplam = alisGider + istisnaBedeli;
+  
+  console.log(`   📊 Gider Detay: Alış=${alisGider.toLocaleString('tr-TR')} + İstisna=${istisnaBedeli.toLocaleString('tr-TR')} = ${toplam.toLocaleString('tr-TR')}`);
+  
+  return toplam;
+}
+
+/**
+ * Devreden KDV Çıkarma
+ * "Sonraki Döneme Devreden Katma Değer Vergisi" alanı
+ */
+function extractDevredenKDV(rawText, cleanText) {
+  const patterns = [
+    /Sonraki D[öo]neme Devreden Katma De[ğg]er Vergisi\s*([\d.,]+)/i,
+    /Sonraki Döneme Devreden\s*[\n\r]?\s*([\d.,]+)/i
+  ];
+  
+  for (const pattern of patterns) {
+    const match = cleanText.match(pattern);
+    if (match) {
+      return parseDecimal(match[1]);
+    }
+  }
+  
+  // rawText'te satır satır ara
+  const lines = rawText.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].includes('Sonraki Döneme Devreden')) {
+      // Bu satırda veya sonraki satırlarda sayı ara
+      for (let j = i; j < Math.min(i + 3, lines.length); j++) {
+        const numMatch = lines[j].match(/([\d]{1,3}(?:\.[\d]{3})*,\d{2})/);
+        if (numMatch) {
+          return parseDecimal(numMatch[1]);
+        }
+      }
+    }
+  }
+  
+  return 0;
+}
+
+/**
+ * POS Tahsilat Çıkarma
+ * "Kredi Kartı İle Tahsil Edilen..." alanı
+ */
+function extractPOS(cleanText) {
+  const patterns = [
+    /Kredi Kart[ıi] [İI]le Tahsil Edilen[^\d]*([\d.,]+)/i,
+    /Kredi Kart[ıi] [İI]le Tahsil[^\d]*([\d.,]+)/i
+  ];
+  
+  for (const pattern of patterns) {
+    const match = cleanText.match(pattern);
+    if (match) {
+      return parseDecimal(match[1]);
+    }
+  }
+  
+  return 0;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ANA PARSE FONKSİYONU
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * KDV-1 Beyannamesini Parse Et
+ * Tüm mükellef tipleri için çalışır
+ */
+function parseKDVBeyanname(rawText) {
+  console.log('\n═══════════════════════════════════════════════════════════');
+  console.log('🔍 PDF PARSE BAŞLADI');
+  console.log('═══════════════════════════════════════════════════════════');
+  
+  // Temizlenmiş text
+  const cleanText = rawText.replace(/\s+/g, ' ');
+  
+  // TC Kimlik No / VKN
+  const tc = extractTC(rawText);
+  console.log(`👤 TC/VKN: ${tc || 'BULUNAMADI'}`);
+  
+  // Dönem
+  const period = extractPeriod(rawText);
+  const periodName = period ? formatPeriodName(period) : null;
+  console.log(`📅 Dönem: ${periodName || 'BULUNAMADI'}`);
+  
+  // Ciro
+  const ciro = extractCiro(rawText, cleanText);
+  console.log(`💰 Ciro: ${ciro.toLocaleString('tr-TR')} ₺`);
+  
+  // Gider
+  const gider = extractGider(rawText, cleanText);
+  console.log(`📉 Gider: ${gider.toLocaleString('tr-TR')} ₺`);
+  
+  // Net Kalan
+  const netKalan = ciro - gider;
+  console.log(`📊 Net Kalan: ${netKalan.toLocaleString('tr-TR')} ₺`);
+  
+  // Devreden KDV
+  const devredenKDV = extractDevredenKDV(rawText, cleanText);
+  console.log(`🔄 Devreden KDV: ${devredenKDV.toLocaleString('tr-TR')} ₺`);
+  
+  // POS
+  const pos = extractPOS(cleanText);
+  console.log(`💳 POS Tahsilat: ${pos.toLocaleString('tr-TR')} ₺`);
+  
+  console.log('═══════════════════════════════════════════════════════════\n');
+  
+  return {
+    tc,
+    period,
+    periodName,
+    ciro,
+    gider,
+    netKalan,
+    devredenKDV,
+    pos
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// API ENDPOINT'LERİ - VERİ ÇEKME
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /financial-periods
+ * Mükellefin kayıtlı dönemlerini listele
+ */
 router.get('/financial-periods', async (req, res) => {
   try {
     const { userId, tc } = req.query;
     
-    // TC Hash al
     let tcHash = null;
     if (userId) {
       tcHash = await getTcHashFromUserId(userId);
@@ -117,7 +636,6 @@ router.get('/financial-periods', async (req, res) => {
       return res.status(400).json({ success: false, error: 'userId veya tc gerekli' });
     }
     
-    // Tüm dönemleri çek
     const { data, error } = await supabase
       .from('financial_statements')
       .select('period')
@@ -133,43 +651,38 @@ router.get('/financial-periods', async (req, res) => {
       return res.json({ success: true, periods: [], years: [] });
     }
     
-    // Dönemleri ve yılları çıkar
     const periods = data.map(d => d.period);
     const yearsSet = new Set(periods.map(p => parseInt(p.split('-')[0])));
     const years = Array.from(yearsSet).sort((a, b) => b - a);
     
-    // Dönem detayları (UI için)
     const periodDetails = periods.map(p => ({
       value: p,
       label: formatPeriodName(p)
     }));
     
-    console.log(`✅ Dönemler: ${periods.length} adet, Yıllar: ${years.join(', ')}`);
+    console.log(`✅ Dönemler: ${periods.length} adet`);
     
-    res.json({
-      success: true,
-      periods: periodDetails,
-      years
-    });
+    res.json({ success: true, periods: periodDetails, years });
     
   } catch (err) {
-    console.error('❌ Financial Periods Error:', err.message);
+    console.error('❌ Error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 2. BELİRLİ DÖNEM VERİSİ
+/**
+ * GET /financial-data/:period
+ * Belirli dönem verisini getir
+ */
 router.get('/financial-data/:period', async (req, res) => {
   try {
     const { period } = req.params;
     const { userId, tc } = req.query;
     
-    // Dönem formatı kontrolü (YYYY-MM)
     if (!period || !/^\d{4}-\d{2}$/.test(period)) {
-      return res.status(400).json({ success: false, error: 'Geçersiz dönem formatı (YYYY-MM)' });
+      return res.status(400).json({ success: false, error: 'Geçersiz dönem formatı' });
     }
     
-    // TC Hash al
     let tcHash = null;
     if (userId) {
       tcHash = await getTcHashFromUserId(userId);
@@ -181,7 +694,6 @@ router.get('/financial-data/:period', async (req, res) => {
       return res.status(400).json({ success: false, error: 'userId veya tc gerekli' });
     }
     
-    // Veriyi çek
     const { data, error } = await supabase
       .from('financial_statements')
       .select('*')
@@ -190,7 +702,6 @@ router.get('/financial-data/:period', async (req, res) => {
       .single();
     
     if (error && error.code !== 'PGRST116') {
-      console.error('❌ DB Error:', error.message);
       return res.status(500).json({ success: false, error: 'DB hatası' });
     }
     
@@ -198,42 +709,38 @@ router.get('/financial-data/:period', async (req, res) => {
       return res.json({ success: false, message: 'Bu dönem için veri yok' });
     }
     
-    // Net kalan hesapla
-    const netKalan = data.matrah_toplami - data.alis_gider_bedel;
-    
-    console.log(`✅ Dönem verisi: ${period}`);
-    
     res.json({
       success: true,
       data: {
         period: data.period,
         periodName: formatPeriodName(data.period),
-        hasilat: data.matrah_toplami,
-        alisGider: data.alis_gider_bedel,
-        netKalan: netKalan,
+        ciro: data.ciro,
+        gider: data.gider,
+        netKalan: data.ciro - data.gider,
         devredenKDV: data.devreden_kdv,
         pos: data.pos_tahsilat
       }
     });
     
   } catch (err) {
-    console.error('❌ Financial Data Period Error:', err.message);
+    console.error('❌ Error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 3. YILLIK ÖZET VE TÜM AYLAR
+/**
+ * GET /financial-yearly/:year
+ * Yıllık özet ve aylık detaylar
+ */
 router.get('/financial-yearly/:year', async (req, res) => {
   try {
     const { year } = req.params;
     const { userId, tc } = req.query;
     
-    // Yıl formatı kontrolü
     if (!year || !/^\d{4}$/.test(year)) {
-      return res.status(400).json({ success: false, error: 'Geçersiz yıl formatı (YYYY)' });
+      return res.status(400).json({ success: false, error: 'Geçersiz yıl formatı' });
     }
     
-    // TC Hash al
     let tcHash = null;
     if (userId) {
       tcHash = await getTcHashFromUserId(userId);
@@ -245,7 +752,6 @@ router.get('/financial-yearly/:year', async (req, res) => {
       return res.status(400).json({ success: false, error: 'userId veya tc gerekli' });
     }
     
-    // Yıla ait tüm dönemleri çek
     const { data, error } = await supabase
       .from('financial_statements')
       .select('*')
@@ -255,58 +761,49 @@ router.get('/financial-yearly/:year', async (req, res) => {
       .order('period', { ascending: true });
     
     if (error) {
-      console.error('❌ DB Error:', error.message);
       return res.status(500).json({ success: false, error: 'DB hatası' });
     }
     
     if (!data || data.length === 0) {
-      return res.json({ 
-        success: false, 
-        message: `${year} yılı için veri yok` 
-      });
+      return res.json({ success: false, message: `${year} yılı için veri yok` });
     }
     
-    // Toplamları hesapla
     let toplamCiro = 0;
     let toplamGider = 0;
     let toplamPOS = 0;
     
-    const monthly = data.map(record => {
-      toplamCiro += record.matrah_toplami || 0;
-      toplamGider += record.alis_gider_bedel || 0;
+    const monthly = data.map((record, idx) => {
+      toplamCiro += record.ciro || 0;
+      toplamGider += record.gider || 0;
       toplamPOS += record.pos_tahsilat || 0;
       
-      const netKalan = record.matrah_toplami - record.alis_gider_bedel;
-      
-      return {
+      const result = {
         period: record.period,
         periodName: formatPeriodName(record.period),
         ay: parseInt(record.period.split('-')[1]),
-        hasilat: record.matrah_toplami,
-        alisGider: record.alis_gider_bedel,
-        netKalan: netKalan,
+        ciro: record.ciro,
+        gider: record.gider,
+        netKalan: record.ciro - record.gider,
         devredenKDV: record.devreden_kdv,
         pos: record.pos_tahsilat
       };
+      
+      // Değişim yüzdeleri
+      if (idx > 0) {
+        const prev = data[idx - 1];
+        if (prev.ciro > 0) {
+          result.ciroChange = parseFloat(((record.ciro - prev.ciro) / prev.ciro * 100).toFixed(1));
+        }
+        if (prev.gider > 0) {
+          result.giderChange = parseFloat(((record.gider - prev.gider) / prev.gider * 100).toFixed(1));
+        }
+      }
+      
+      return result;
     });
     
-    // Önceki aya göre değişim hesapla
-    for (let i = 1; i < monthly.length; i++) {
-      const current = monthly[i];
-      const previous = monthly[i - 1];
-      
-      if (previous.hasilat > 0) {
-        current.ciroChange = ((current.hasilat - previous.hasilat) / previous.hasilat * 100).toFixed(1);
-      }
-      if (previous.alisGider > 0) {
-        current.giderChange = ((current.alisGider - previous.alisGider) / previous.alisGider * 100).toFixed(1);
-      }
-    }
-    
-    const netKalanToplam = toplamCiro - toplamGider;
-    const karMarji = toplamCiro > 0 ? ((netKalanToplam / toplamCiro) * 100).toFixed(1) : 0;
-    
-    console.log(`✅ Yıllık rapor: ${year}, ${data.length} ay`);
+    const netKalan = toplamCiro - toplamGider;
+    const karMarji = toplamCiro > 0 ? parseFloat(((netKalan / toplamCiro) * 100).toFixed(1)) : 0;
     
     res.json({
       success: true,
@@ -314,9 +811,9 @@ router.get('/financial-yearly/:year', async (req, res) => {
       summary: {
         toplamCiro,
         toplamGider,
-        netKalan: netKalanToplam,
+        netKalan,
         toplamPOS,
-        karMarji: parseFloat(karMarji),
+        karMarji,
         aylikOrtalamaCiro: Math.round(toplamCiro / data.length),
         aylikOrtalamaGider: Math.round(toplamGider / data.length),
         kayitliAySayisi: data.length
@@ -325,17 +822,19 @@ router.get('/financial-yearly/:year', async (req, res) => {
     });
     
   } catch (err) {
-    console.error('❌ Financial Yearly Error:', err.message);
+    console.error('❌ Error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 4. EN SON DÖNEM VERİSİ
+/**
+ * GET /financial-data
+ * En son dönem verisini getir
+ */
 router.get('/financial-data', async (req, res) => {
   try {
     const { userId, tc } = req.query;
     
-    // TC Hash al
     let tcHash = null;
     if (userId) {
       tcHash = await getTcHashFromUserId(userId);
@@ -347,7 +846,6 @@ router.get('/financial-data', async (req, res) => {
       return res.status(400).json({ success: false, error: 'userId veya tc gerekli' });
     }
     
-    // En son dönemi çek
     const { data, error } = await supabase
       .from('financial_statements')
       .select('*')
@@ -356,7 +854,6 @@ router.get('/financial-data', async (req, res) => {
       .limit(1);
     
     if (error) {
-      console.error('❌ DB Error:', error.message);
       return res.status(500).json({ success: false, error: 'DB hatası' });
     }
     
@@ -365,9 +862,8 @@ router.get('/financial-data', async (req, res) => {
     }
     
     const record = data[0];
-    const netKalan = record.matrah_toplami - record.alis_gider_bedel;
     
-    // Bir önceki dönemi çek (değişim hesabı için)
+    // Önceki dönem karşılaştırması
     const prevPeriod = getPreviousPeriod(record.period);
     const { data: prevData } = await supabase
       .from('financial_statements')
@@ -380,42 +876,43 @@ router.get('/financial-data', async (req, res) => {
     let giderChange = null;
     
     if (prevData) {
-      if (prevData.matrah_toplami > 0) {
-        ciroChange = ((record.matrah_toplami - prevData.matrah_toplami) / prevData.matrah_toplami * 100).toFixed(1);
+      if (prevData.ciro > 0) {
+        ciroChange = parseFloat(((record.ciro - prevData.ciro) / prevData.ciro * 100).toFixed(1));
       }
-      if (prevData.alis_gider_bedel > 0) {
-        giderChange = ((record.alis_gider_bedel - prevData.alis_gider_bedel) / prevData.alis_gider_bedel * 100).toFixed(1);
+      if (prevData.gider > 0) {
+        giderChange = parseFloat(((record.gider - prevData.gider) / prevData.gider * 100).toFixed(1));
       }
     }
-    
-    console.log(`✅ En son dönem: ${record.period}`);
     
     res.json({
       success: true,
       data: {
         period: record.period,
         periodName: formatPeriodName(record.period),
-        hasilat: record.matrah_toplami,
-        alisGider: record.alis_gider_bedel,
-        netKalan: netKalan,
+        ciro: record.ciro,
+        gider: record.gider,
+        netKalan: record.ciro - record.gider,
         devredenKDV: record.devreden_kdv,
         pos: record.pos_tahsilat,
-        ciroChange: ciroChange ? parseFloat(ciroChange) : null,
-        giderChange: giderChange ? parseFloat(giderChange) : null
+        ciroChange,
+        giderChange
       }
     });
     
   } catch (err) {
-    console.error('❌ Financial Data Error:', err.message);
+    console.error('❌ Error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ============================================
-// PDF UPLOAD ENDPOINT'LERİ
-// ============================================
+// ═══════════════════════════════════════════════════════════════════════════
+// API ENDPOINT'LERİ - PDF UPLOAD
+// ═══════════════════════════════════════════════════════════════════════════
 
-// TEST PARSE - Sadece parse sonucunu gösterir, DB'ye kaydetmez
+/**
+ * POST /admin/test-parse
+ * PDF'i parse et, sonucu göster (DB'ye kaydetme)
+ */
 router.post('/admin/test-parse', upload.single('pdf'), async (req, res) => {
   try {
     const { password } = req.body;
@@ -427,57 +924,22 @@ router.post('/admin/test-parse', upload.single('pdf'), async (req, res) => {
     }
     
     const pdfData = await pdfParse(req.file.buffer);
-    const rawText = pdfData.text;
-    const cleanText = rawText.replace(/\s+/g, ' ');
-    
-    // TC Kimlik No
-    const tcMatch = cleanText.match(/Vergi Kimlik Numarası[^\d]*(\d{11})/);
-    const tc = tcMatch ? tcMatch[1] : null;
-    
-    // Dönem
-    const period = extractPeriod(rawText);
-    const periodName = period ? formatPeriodName(period) : null;
-    
-    // Matrah
-    const matrahMatch = cleanText.match(/Matrah Toplamı\s*([\d.,]+)/);
-    const matrah = matrahMatch ? parseDecimal(matrahMatch[1]) : 0;
-    
-    // Alış Gider
-    let alisGider = 0;
-    const idx = rawText.indexOf("Alınan Mal ve Hizmete Ait Bedel");
-    if (idx !== -1) {
-      const sub = rawText.substring(idx, idx + 600).replace(/\s+/g, '');
-      const matches = [...sub.matchAll(/(1|8|10|18|20)([\d]{1,3}(?:\.[\d]{3})*,\d{2})([\d]{1,3}(?:\.[\d]{3})*,\d{2})/g)];
-      matches.forEach(m => alisGider += parseDecimal(m[2]));
-    }
-    
-    // Devreden KDV
-    const devredenMatch = cleanText.match(/Sonraki Döneme Devreden Katma Değer Vergisi\s*([\d.,]+)/);
-    const devredenKDV = devredenMatch ? parseDecimal(devredenMatch[1]) : 0;
-    
-    // POS
-    const posMatch = cleanText.match(/Kredi Kartı İle Tahsil[^\d]*([\d.,]+)/);
-    const pos = posMatch ? parseDecimal(posMatch[1]) : 0;
-    
-    console.log(`🧪 Test Parse: ${req.file.originalname}`);
-    console.log(`   TC: ${tc || 'Bulunamadı'}`);
-    console.log(`   Dönem: ${periodName || 'Bulunamadı'}`);
-    console.log(`   Matrah: ${matrah}`);
-    console.log(`   Gider: ${alisGider}`);
+    const parsed = parseKDVBeyanname(pdfData.text);
     
     res.json({
       success: true,
       filename: req.file.originalname,
       parsed: {
-        tc,
-        period,
-        periodName,
-        matrah,
-        alisGider,
-        devredenKDV,
-        pos
+        tc: parsed.tc,
+        period: parsed.period,
+        periodName: parsed.periodName,
+        ciro: parsed.ciro,
+        gider: parsed.gider,
+        netKalan: parsed.netKalan,
+        devredenKDV: parsed.devredenKDV,
+        pos: parsed.pos
       },
-      rawText: rawText.substring(0, 10000) // İlk 10K karakter
+      rawText: pdfData.text.substring(0, 15000)
     });
     
   } catch (err) {
@@ -486,7 +948,10 @@ router.post('/admin/test-parse', upload.single('pdf'), async (req, res) => {
   }
 });
 
-// TOPLU PDF UPLOAD
+/**
+ * POST /admin/upload-pdfs
+ * Toplu PDF yükle (200 adet'e kadar)
+ */
 router.post('/admin/upload-pdfs', upload.array('pdfs', 200), async (req, res) => {
   try {
     const { password } = req.body;
@@ -497,138 +962,124 @@ router.post('/admin/upload-pdfs', upload.array('pdfs', 200), async (req, res) =>
       return res.status(400).json({ error: 'PDF yok!' });
     }
     
-    console.log(`📥 ${req.files.length} PDF yükleniyor...`);
+    console.log(`\n📥 ${req.files.length} PDF yükleniyor...\n`);
     
     const results = { success: [], errors: [] };
     
     for (const file of req.files) {
       try {
         const pdfData = await pdfParse(file.buffer);
-        const rawText = pdfData.text;
-        const cleanText = rawText.replace(/\s+/g, ' ');
+        const parsed = parseKDVBeyanname(pdfData.text);
         
-        const tcMatch = cleanText.match(/Vergi Kimlik Numarası[^\d]*(\d{11})/);
-        const tc = tcMatch ? tcMatch[1] : null;
-        if (!tc) { 
-          results.errors.push({ file: file.originalname, error: 'TC bulunamadı' }); 
-          continue; 
+        if (!parsed.tc) {
+          results.errors.push({ file: file.originalname, error: 'TC/VKN bulunamadı' });
+          continue;
         }
         
-        const tcHash = hashTC(tc);
-        
-        const period = extractPeriod(rawText);
-        if (!period) { 
-          results.errors.push({ file: file.originalname, error: 'Dönem bulunamadı' }); 
-          continue; 
+        if (!parsed.period) {
+          results.errors.push({ file: file.originalname, error: 'Dönem bulunamadı' });
+          continue;
         }
         
-        const matrahMatch = cleanText.match(/Matrah Toplamı\s*([\d.,]+)/);
-        const matrah = matrahMatch ? parseDecimal(matrahMatch[1]) : 0;
-        
-        let alisGider = 0;
-        const idx = rawText.indexOf("Alınan Mal ve Hizmete Ait Bedel");
-        if (idx !== -1) {
-          const sub = rawText.substring(idx, idx + 600).replace(/\s+/g, '');
-          const matches = [...sub.matchAll(/(1|8|10|18|20)([\d]{1,3}(?:\.[\d]{3})*,\d{2})([\d]{1,3}(?:\.[\d]{3})*,\d{2})/g)];
-          matches.forEach(m => alisGider += parseDecimal(m[2]));
-        }
-        
-        const devredenMatch = cleanText.match(/Sonraki Döneme Devreden Katma Değer Vergisi\s*([\d.,]+)/);
-        const devreden = devredenMatch ? parseDecimal(devredenMatch[1]) : 0;
-        
-        const posMatch = cleanText.match(/Kredi Kartı İle Tahsil[^\d]*([\d.,]+)/);
-        const pos = posMatch ? parseDecimal(posMatch[1]) : 0;
+        const tcHash = hashTC(parsed.tc);
         
         const { error } = await supabase.from('financial_statements').upsert({
           tc_kimlik_no_hash: tcHash,
-          period,
-          matrah_toplami: matrah,
-          alis_gider_bedel: alisGider,
-          devreden_kdv: devreden,
-          pos_tahsilat: pos,
+          period: parsed.period,
+          ciro: parsed.ciro,
+          gider: parsed.gider,
+          devreden_kdv: parsed.devredenKDV,
+          pos_tahsilat: parsed.pos,
           pdf_filename: file.originalname,
           processed_at: new Date().toISOString()
         }, { onConflict: 'tc_kimlik_no_hash,period' });
         
         if (error) {
-          console.error(`❌ DB Error: ${file.originalname}`, error.message);
           results.errors.push({ file: file.originalname, error: error.message });
         } else {
-          console.log(`✅ ${file.originalname} → ${period}`);
-          results.success.push({ file: file.originalname, period });
+          results.success.push({
+            file: file.originalname,
+            period: parsed.periodName,
+            tc: parsed.tc,
+            ciro: parsed.ciro,
+            gider: parsed.gider
+          });
         }
         
-      } catch (err) { 
-        console.error(`❌ Parse Error: ${file.originalname}`, err.message);
-        results.errors.push({ file: file.originalname, error: err.message }); 
+      } catch (err) {
+        results.errors.push({ file: file.originalname, error: err.message });
       }
     }
     
-    console.log(`📊 Sonuç: ${results.success.length} başarılı, ${results.errors.length} hatalı`);
+    console.log(`\n📊 Sonuç: ${results.success.length} başarılı, ${results.errors.length} hatalı\n`);
+    
     res.json({ success: true, results });
     
-  } catch (error) { 
+  } catch (error) {
     console.error('❌ Upload Error:', error.message);
-    res.status(500).json({ error: error.message }); 
+    res.status(500).json({ error: error.message });
   }
 });
 
-// TEK PDF UPLOAD
+/**
+ * POST /admin/upload-pdf
+ * Tek PDF yükle
+ */
 router.post('/admin/upload-pdf', upload.single('pdf'), async (req, res) => {
   try {
     const { password } = req.body;
-    if (password !== process.env.ADMIN_PASSWORD) return res.status(401).json({ error: 'Yetkisiz' });
-    if (!req.file) return res.status(400).json({ error: 'Dosya yok' });
-    
-    const pdfData = await pdfParse(req.file.buffer);
-    const rawText = pdfData.text;
-    const cleanText = rawText.replace(/\s+/g, ' ');
-    
-    const tcMatch = cleanText.match(/Vergi Kimlik Numarası[^\d]*(\d{11})/);
-    const tc = tcMatch ? tcMatch[1] : null;
-    if (!tc) return res.status(400).json({ error: 'TC bulunamadı' });
-    
-    const tcHash = hashTC(tc);
-    
-    const period = extractPeriod(rawText);
-    if (!period) return res.status(400).json({ error: 'Dönem bulunamadı' });
-    
-    const matrahMatch = cleanText.match(/Matrah Toplamı\s*([\d.,]+)/);
-    const matrah = matrahMatch ? parseDecimal(matrahMatch[1]) : 0;
-    
-    let alisGider = 0;
-    const idx = rawText.indexOf("Alınan Mal ve Hizmete Ait Bedel");
-    if (idx !== -1) {
-      const sub = rawText.substring(idx, idx + 600).replace(/\s+/g, '');
-      const matches = [...sub.matchAll(/(1|8|10|18|20)([\d]{1,3}(?:\.[\d]{3})*,\d{2})([\d]{1,3}(?:\.[\d]{3})*,\d{2})/g)];
-      matches.forEach(m => alisGider += parseDecimal(m[2]));
+    if (password !== process.env.ADMIN_PASSWORD) {
+      return res.status(401).json({ error: 'Yetkisiz' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'Dosya yok' });
     }
     
-    const devredenMatch = cleanText.match(/Sonraki Döneme Devreden Katma Değer Vergisi\s*([\d.,]+)/);
-    const devreden = devredenMatch ? parseDecimal(devredenMatch[1]) : 0;
+    const pdfData = await pdfParse(req.file.buffer);
+    const parsed = parseKDVBeyanname(pdfData.text);
     
-    const posMatch = cleanText.match(/Kredi Kartı İle Tahsil[^\d]*([\d.,]+)/);
-    const pos = posMatch ? parseDecimal(posMatch[1]) : 0;
+    if (!parsed.tc) {
+      return res.status(400).json({ error: 'TC/VKN bulunamadı' });
+    }
+    
+    if (!parsed.period) {
+      return res.status(400).json({ error: 'Dönem bulunamadı' });
+    }
+    
+    const tcHash = hashTC(parsed.tc);
     
     const { error } = await supabase.from('financial_statements').upsert({
       tc_kimlik_no_hash: tcHash,
-      period,
-      matrah_toplami: matrah,
-      alis_gider_bedel: alisGider,
-      devreden_kdv: devreden,
-      pos_tahsilat: pos,
+      period: parsed.period,
+      ciro: parsed.ciro,
+      gider: parsed.gider,
+      devreden_kdv: parsed.devredenKDV,
+      pos_tahsilat: parsed.pos,
       pdf_filename: req.file.originalname,
       processed_at: new Date().toISOString()
     }, { onConflict: 'tc_kimlik_no_hash,period' });
     
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
     
-    console.log(`✅ Tek PDF: ${req.file.originalname} → ${period}`);
-    res.json({ success: true, data: { period, matrah, alisGider, devreden, pos } });
+    res.json({
+      success: true,
+      data: {
+        tc: parsed.tc,
+        period: parsed.period,
+        periodName: parsed.periodName,
+        ciro: parsed.ciro,
+        gider: parsed.gider,
+        netKalan: parsed.netKalan,
+        devredenKDV: parsed.devredenKDV,
+        pos: parsed.pos
+      }
+    });
     
-  } catch (err) { 
+  } catch (err) {
     console.error('❌ Tek PDF Error:', err.message);
-    res.status(500).json({ error: err.message }); 
+    res.status(500).json({ error: err.message });
   }
 });
 
