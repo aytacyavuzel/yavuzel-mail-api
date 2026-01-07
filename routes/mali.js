@@ -123,8 +123,13 @@ async function parseWithClaude(pdfBuffer) {
   
   "sonraki_doneme_devreden_kdv": "Sonraki Döneme Devreden Katma Değer Vergisi satırındaki değer",
   
-  "pos_tahsilat": "Kredi Kartı İle Tahsil Edilen... satırındaki değer"
+  "pos_tahsilat": "Kredi Kartı İle Tahsil Edilen Teslim ve Hizmetlerin KDV Dahil Karşılığını Teşkil Eden Bedel (bu AYLIK değerdir, kümülatif DEĞİL)"
 }
+
+NOT: DİĞER BİLGİLER bölümünde 3 satır var:
+1. Teslim ve Hizmetlerin Karşılığını Teşkil Eden Bedel (kümülatif) - BUNU ALMA
+2. Kredi Kartı İle Tahsil Edilen... - BU POS_TAHSILAT
+3. Teslim ve Hizmetlerin Karşılığını Teşkil Eden Bedel (aylık) - BUNU ALMA
 
 SADECE JSON DÖNDÜR, başka bir şey yazma.`;
 
