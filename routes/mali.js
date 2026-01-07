@@ -178,73 +178,121 @@ function extractTC(rawText) {
 /**
  * Dönem Çıkarma (Yıl + Ay)
  * 
- * PDF yapısı:
- * Yıl: 2025
- * Ay: Kasım
+ * PDF yapısı farklı olabilir:
+ * Yıl     2025
+ * Ay      Kasım
+ * 
+ * veya:
+ * Yıl
+ * Ay
+ * 2025
+ * Kasım
  */
 function extractPeriod(rawText) {
   const ayMap = {
     'ocak': '01', 'şubat': '02', 'mart': '03', 'nisan': '04',
     'mayıs': '05', 'haziran': '06', 'temmuz': '07', 'ağustos': '08',
-    'eylül': '09', 'ekim': '10', 'kasım': '11', 'aralık': '12',
-    // Büyük harf versiyonları
-    'OCAK': '01', 'ŞUBAT': '02', 'MART': '03', 'NİSAN': '04',
-    'MAYIS': '05', 'HAZİRAN': '06', 'TEMMUZ': '07', 'AĞUSTOS': '08',
-    'EYLÜL': '09', 'EKİM': '10', 'KASIM': '11', 'ARALIK': '12'
+    'eylül': '09', 'ekim': '10', 'kasım': '11', 'aralık': '12'
   };
   
   let yil = null;
   let ay = null;
   
-  // Yöntem 1: "Yıl" kelimesinden sonraki 4 haneli sayı
-  const yilPatterns = [
-    /Y[ıi]l\s*[\n\r\s:]*(\d{4})/i,
-    /Y[ıi]l\s+(\d{4})/i
-  ];
+  // Satır satır analiz et
+  const lines = rawText.split('\n').map(l => l.trim()).filter(l => l);
   
-  for (const pattern of yilPatterns) {
-    const match = rawText.match(pattern);
-    if (match) {
-      yil = match[1];
-      break;
+  // Yöntem 1: "Yıl" satırından sonraki satırlarda 4 haneli yıl ara
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    // "Yıl" kelimesini içeren satır
+    if (/^Y[ıi]l$/i.test(line) || line === 'Yıl' || line === 'YIL') {
+      // Sonraki 5 satırda 4 haneli yıl ara
+      for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
+        const nextLine = lines[j];
+        const yilMatch = nextLine.match(/\b(202[4-9])\b/);
+        if (yilMatch) {
+          yil = yilMatch[1];
+          break;
+        }
+      }
+    }
+    
+    // "Ay" kelimesini içeren satır
+    if (/^Ay$/i.test(line) || line === 'Ay' || line === 'AY') {
+      // Sonraki 5 satırda ay adı ara
+      for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
+        const nextLine = lines[j].toLowerCase().trim();
+        if (ayMap[nextLine]) {
+          ay = ayMap[nextLine];
+          break;
+        }
+      }
     }
   }
   
-  // Yöntem 2: "Ay" kelimesinden sonraki ay adı
-  const ayPatterns = [
-    /\bAy\s*[\n\r\s:]*([A-Za-zİÖÜŞÇĞıöüşçğ]+)/i,
-    /\bAy\s+([A-Za-zİÖÜŞÇĞıöüşçğ]+)/i
-  ];
-  
-  for (const pattern of ayPatterns) {
-    const match = rawText.match(pattern);
-    if (match) {
-      const ayAdi = match[1].trim();
-      // Hem küçük hem büyük harf ile dene
-      ay = ayMap[ayAdi] || ayMap[ayAdi.toLowerCase()] || ayMap[ayAdi.toUpperCase()];
-      if (ay) break;
+  // Yöntem 2: Aynı satırda "Yıl 2025" veya "Yıl: 2025" formatı
+  if (!yil) {
+    const yilPatterns = [
+      /Y[ıi]l\s*[:\s]\s*(\d{4})/i,
+      /Y[ıi]l\s+(\d{4})/i
+    ];
+    
+    for (const pattern of yilPatterns) {
+      const match = rawText.match(pattern);
+      if (match) {
+        yil = match[1];
+        break;
+      }
     }
   }
   
-  // Alternatif: Ay adını doğrudan text içinde ara
+  // Yöntem 3: Aynı satırda "Ay Kasım" veya "Ay: Kasım" formatı
   if (!ay) {
     for (const [ayAdi, ayNo] of Object.entries(ayMap)) {
-      if (rawText.includes(ayAdi)) {
+      const pattern = new RegExp(`\\bAy\\s*[:\\s]\\s*${ayAdi}`, 'i');
+      if (pattern.test(rawText)) {
         ay = ayNo;
         break;
       }
     }
   }
   
-  // Alternatif: Yılı başka yerden al
-  if (!yil) {
-    // "Onay Zamanı: 25.12.2025" gibi yerlerden alma - bu tehlikeli
-    // Sadece "202X" formatında ve Yıl bağlamında ara
-    const yilAlt = rawText.match(/\b(202[4-9])\b/);
-    if (yilAlt) {
-      yil = yilAlt[1];
+  // Yöntem 4: Sadece ay adını text içinde ara (son çare)
+  if (!ay) {
+    const textLower = rawText.toLowerCase();
+    for (const [ayAdi, ayNo] of Object.entries(ayMap)) {
+      // "Kasım" kelimesini bul ama "Kasım 2024" gibi yıl ile beraber olmalı
+      const regex = new RegExp(`\\b${ayAdi}\\b`, 'i');
+      if (regex.test(textLower)) {
+        ay = ayNo;
+        break;
+      }
     }
   }
+  
+  // Yöntem 5: Yılı başka yerden al (son çare)
+  if (!yil) {
+    // DÖNEM TİPİ bölümünden sonra ara
+    const donemIdx = rawText.indexOf('DÖNEM TİPİ');
+    if (donemIdx !== -1) {
+      const afterDonem = rawText.substring(donemIdx, donemIdx + 200);
+      const yilMatch = afterDonem.match(/\b(202[4-9])\b/);
+      if (yilMatch) {
+        yil = yilMatch[1];
+      }
+    }
+  }
+  
+  // Son çare: İlk bulunan 202X yılını al
+  if (!yil) {
+    const yilMatch = rawText.match(/\b(202[4-9])\b/);
+    if (yilMatch) {
+      yil = yilMatch[1];
+    }
+  }
+  
+  console.log(`   📅 Dönem Parse: Yıl=${yil}, Ay=${ay}`);
   
   if (yil && ay) {
     return `${yil}-${ay}`;
