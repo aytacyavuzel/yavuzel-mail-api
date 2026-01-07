@@ -22,6 +22,9 @@ const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 
+// PDF'den text çıkarmak için (sadece POS regex)
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENT SETUP
 // ═══════════════════════════════════════════════════════════════════════════
@@ -85,6 +88,56 @@ function getPreviousPeriod(period) {
   return `${year}-${String(month - 1).padStart(2, '0')}`;
 }
 
+/**
+ * PDF'den POS değerini regex ile çıkar
+ * "Kredi Kartı İle Tahsil Edilen" satırındaki sayıyı bulur
+ */
+async function extractPOSWithRegex(pdfBuffer) {
+  try {
+    const uint8Array = new Uint8Array(pdfBuffer);
+    const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
+    const pdf = await loadingTask.promise;
+    
+    let fullText = '';
+    
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map(item => item.str).join(' ');
+      fullText += pageText + '\n';
+    }
+    
+    // "Kredi Kartı" ile başlayan satırı bul, ardından gelen sayıyı al
+    // Pattern: Kredi Kartı ... Bedel [SAYI]
+    const patterns = [
+      /Kredi\s*Kartı\s*İle\s*Tahsil[^0-9]*?([\d.,]+)/i,
+      /Kredi\s*Kartı[^0-9]*?Bedel[^0-9]*?([\d.,]+)/i,
+      /KDV\s*Dahil\s*Karşılığını\s*Teşkil\s*Eden\s*Bedel\s*([\d.,]+)/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = fullText.match(pattern);
+      if (match) {
+        // Türk formatından parse et: 1.234.567,89 → 1234567.89
+        let numStr = match[1];
+        numStr = numStr.replace(/\./g, '').replace(',', '.');
+        const value = parseFloat(numStr);
+        
+        if (!isNaN(value)) {
+          console.log(`   💳 POS (regex): ${value.toLocaleString('tr-TR')} ₺`);
+          return value;
+        }
+      }
+    }
+    
+    console.log('   💳 POS (regex): Bulunamadı, 0 döndürülüyor');
+    return 0;
+  } catch (err) {
+    console.log(`   💳 POS (regex) hata: ${err.message}`);
+    return 0;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CLAUDE API İLE PDF PARSE
 // ═══════════════════════════════════════════════════════════════════════════
@@ -121,26 +174,8 @@ async function parseWithClaude(pdfBuffer) {
   
   "istisna_kdvsiz_temin_bedeli": "TAM İSTİSNA tablosundaki 'KDV Ödenmeksizin Temin Edilen Mal Bedeli' sütunundaki değerlerin TOPLAMI",
   
-  "sonraki_doneme_devreden_kdv": "Sonraki Döneme Devreden Katma Değer Vergisi satırındaki değer",
-  
-  "pos_tahsilat": "Aşağıdaki ÖRNEK'e bak"
+  "sonraki_doneme_devreden_kdv": "Sonraki Döneme Devreden Katma Değer Vergisi satırındaki değer"
 }
-
-📌 POS_TAHSILAT İÇİN ÖRNEK:
-
-DİĞER BİLGİLER bölümü şöyle görünür:
----
-Teslim ve Hizmetlerin Karşılığını Teşkil Eden Bedel (kümülatif)     121.707.860,32
-Kredi Kartı İle Tahsil Edilen ... Bedel                             3.847.217,50
-Teslim ve Hizmetlerin Karşılığını Teşkil Eden Bedel (aylık)         27.744,82
----
-
-Bu örnekte:
-- 121.707.860,32 → kümülatif (ALMA)
-- 3.847.217,50 → pos_tahsilat (BU!)
-- 27.744,82 → aylık (ALMA)
-
-pos_tahsilat = "Kredi Kartı" yazan satırın değeri = 3.847.217,50
 
 SADECE JSON DÖNDÜR, başka bir şey yazma.`;
 
@@ -185,8 +220,9 @@ SADECE JSON DÖNDÜR, başka bir şey yazma.`;
 
 /**
  * Claude'dan gelen ham veriyi işle ve hesapla
+ * POS değeri ayrıca regex ile alınıyor
  */
-function processClaudeResponse(raw) {
+function processClaudeResponse(raw, posFromRegex) {
   // Sayıya çevir (string gelebilir)
   const toNumber = (val) => {
     if (typeof val === 'number') return val;
@@ -213,7 +249,7 @@ function processClaudeResponse(raw) {
   const istisna_alis = toNumber(raw.istisna_kdvsiz_temin_bedeli);
   
   const devreden_kdv = toNumber(raw.sonraki_doneme_devreden_kdv);
-  const pos = toNumber(raw.pos_tahsilat);
+  const pos = posFromRegex; // Regex ile alındı
   
   // HESAPLAMALAR (backend'de yapılıyor, Claude'a yaptırılmıyor)
   const ciro = matrah_toplami + ozel_matrah;
@@ -278,14 +314,17 @@ function validateParsedData(data) {
 
 async function parseKDVBeyanname(pdfBuffer) {
   console.log('\n═══════════════════════════════════════════════════════════');
-  console.log('🔍 PDF PARSE BAŞLADI (Claude AI v6.0)');
+  console.log('🔍 PDF PARSE BAŞLADI (Claude AI v6.0 + Regex POS)');
   console.log('═══════════════════════════════════════════════════════════');
   
-  // Claude ile parse et
+  // POS'u regex ile al (Claude karıştırıyor)
+  const posFromRegex = await extractPOSWithRegex(pdfBuffer);
+  
+  // Claude ile diğer değerleri parse et
   const rawData = await parseWithClaude(pdfBuffer);
   
   // Ham veriyi işle ve hesapla
-  const processed = processClaudeResponse(rawData);
+  const processed = processClaudeResponse(rawData, posFromRegex);
   
   // Validation
   const validation = validateParsedData(processed);
