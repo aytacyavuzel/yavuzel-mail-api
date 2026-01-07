@@ -162,6 +162,7 @@ async function parseWithClaude(pdfBuffer) {
 
 {
   "tc_vkn": "Mükellefin TC veya VKN numarası (10-11 hane)",
+  "ad_soyad": "Mükellefin Adı Soyadı veya Ünvanı (firma ise firma adı)",
   "yil": 2025,
   "ay": 11,
   
@@ -233,6 +234,7 @@ function processClaudeResponse(raw, posFromRegex) {
   };
   
   const tc_vkn = String(raw.tc_vkn || '').replace(/\D/g, '');
+  const ad_soyad = String(raw.ad_soyad || '').trim();
   const yil = toNumber(raw.yil);
   const ay = toNumber(raw.ay);
   
@@ -258,6 +260,7 @@ function processClaudeResponse(raw, posFromRegex) {
   
   return {
     tc: tc_vkn,
+    adSoyad: ad_soyad,
     period,
     periodName: formatPeriodName(period),
     
@@ -330,6 +333,7 @@ async function parseKDVBeyanname(pdfBuffer) {
   const validation = validateParsedData(processed);
   
   console.log(`👤 TC/VKN: ${processed.tc || 'BULUNAMADI'}`);
+  console.log(`👨‍💼 Ad Soyad: ${processed.adSoyad || 'BULUNAMADI'}`);
   console.log(`📅 Dönem: ${processed.periodName || 'BULUNAMADI'}`);
   console.log(`💰 Ciro: ${processed.ciro.toLocaleString('tr-TR')} ₺`);
   console.log(`📦 Gider: ${processed.gider.toLocaleString('tr-TR')} ₺`);
@@ -618,6 +622,7 @@ router.post('/admin/upload-pdfs', upload.array('pdfs', 200), async (req, res) =>
         
         const { error } = await supabase.from('financial_statements').upsert({
           tc_kimlik_no_hash: hashTC(parsed.tc),
+          ad_soyad: parsed.adSoyad,
           period: parsed.period,
           ciro: parsed.ciro,
           gider: parsed.gider,
@@ -633,6 +638,7 @@ router.post('/admin/upload-pdfs', upload.array('pdfs', 200), async (req, res) =>
           results.success.push({ 
             file: file.originalname, 
             tc: parsed.tc,
+            adSoyad: parsed.adSoyad,
             period: parsed.periodName, 
             ciro: parsed.ciro, 
             gider: parsed.gider,
@@ -683,6 +689,7 @@ router.post('/admin/upload-pdf', upload.single('pdf'), async (req, res) => {
     
     const { error } = await supabase.from('financial_statements').upsert({
       tc_kimlik_no_hash: hashTC(parsed.tc),
+      ad_soyad: parsed.adSoyad,
       period: parsed.period,
       ciro: parsed.ciro,
       gider: parsed.gider,
