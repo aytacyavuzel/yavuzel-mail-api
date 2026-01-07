@@ -101,7 +101,9 @@ function getPreviousPeriod(period) {
  * Her item: { text, x, y, width, height, pageNum }
  */
 async function extractTextItems(pdfBuffer) {
-  const loadingTask = pdfjsLib.getDocument({ data: pdfBuffer });
+  // Buffer'ı Uint8Array'e çevir (pdfjs-dist bunu istiyor)
+  const uint8Array = new Uint8Array(pdfBuffer);
+  const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
   const pdf = await loadingTask.promise;
   
   const allItems = [];
